@@ -1,0 +1,137 @@
+{
+  "dataset_root": "/mnt/data/biomarker_ml_package/models/extracted_dataset/Final Files to Use for the Script",
+  "notes": [
+    "The live integration uses EDA + temperature + minute_index.",
+    "Pulse rate is collected by the live script but is not used by the trained models because the uploaded labeled files do not contain a directly matching pulse-rate feature.",
+    "Minute index is counted from the beginning of the current live session, so predictions are most meaningful when the stream starts near the beginning of a task/session."
+  ],
+  "frustration": {
+    "features": [
+      "eda_t_minus_1",
+      "temp_t_minus_1",
+      "eda_t_0",
+      "temp_t_0",
+      "eda_delta_t_0",
+      "temp_delta_t_0",
+      "minute_index"
+    ],
+    "evaluation": {
+      "samples": 341,
+      "sessions": 27,
+      "class_counts": {
+        "low": 254,
+        "medium": 54,
+        "high": 33
+      },
+      "accuracy": 0.7096774193548387,
+      "macro_f1": 0.6135084664496429,
+      "confusion_matrix": [
+        [
+          181,
+          16,
+          57
+        ],
+        [
+          0,
+          43,
+          11
+        ],
+        [
+          9,
+          6,
+          18
+        ]
+      ],
+      "labels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "used_files": [
+      "P10_Active_Medium.csv",
+      "P10_Passive_Medium.csv",
+      "P11_Active_Low.csv",
+      "P11_Passive_Low.csv",
+      "P12_Active_Medium.csv",
+      "P12_Passive_Medium.csv",
+      "P13_Active_Medium.csv",
+      "P13_Passive_Medium.csv",
+      "P15_Passive_High.csv",
+      "P16_Active_High.csv",
+      "P16_Passive_high.csv",
+      "P18_Active_Low.csv",
+      "P18_Low_Passive.csv",
+      "P19_Active_Low.csv",
+      "P19_Passive_Low.csv",
+      "P1_Active_Medium.csv",
+      "P1_Passive_Medium.csv",
+      "P2_Active_Low.csv",
+      "P2_Passive_Low.csv",
+      "P3_Passive_High.csv",
+      "P6_Passive_Medium.csv",
+      "P7_Active_High.csv",
+      "P7_Passive_Medium.csv",
+      "P8_Active_Medium.csv",
+      "P8_Passive_Medium.csv",
+      "P9_Active_Low.csv",
+      "P9_Passive_Low.csv"
+    ]
+  },
+  "mental_demand": {
+    "features": [
+      "eda",
+      "temp",
+      "minute_index"
+    ],
+    "evaluation": {
+      "samples": 182,
+      "sessions": 14,
+      "class_counts": {
+        "low": 96,
+        "high": 54,
+        "medium": 32
+      },
+      "accuracy": 0.521978021978022,
+      "macro_f1": 0.5167160881446596,
+      "confusion_matrix": [
+        [
+          46,
+          11,
+          39
+        ],
+        [
+          0,
+          24,
+          8
+        ],
+        [
+          5,
+          24,
+          25
+        ]
+      ],
+      "labels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "used_files": [
+      "P10_Active_Medium.csv",
+      "P11_Active_High.csv",
+      "P12_Active_High.csv",
+      "P13_Active_Medium.csv",
+      "P16_Active_High.csv",
+      "P18_Active_Low.csv",
+      "P19_Active_High.csv",
+      "P1_Active_Medium.csv",
+      "P2_Active_Low.csv",
+      "P3_Active_High.csv",
+      "P5_Active_Medium.csv",
+      "P5_Active_low.csv",
+      "P7_Active_Medium.csv",
+      "P8_Active_Medium.csv"
+    ]
+  }
+}
