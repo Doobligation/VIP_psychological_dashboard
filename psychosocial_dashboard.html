@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Psychosocial Risk Monitoring Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #38bdf8;
+      --good: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --line: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #0b1220 0%, #111827 100%);
+      color: var(--text);
+    }
+    .app { padding: 20px; max-width: 1500px; margin: 0 auto; }
+    .header {
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+      margin-bottom: 18px;
+    }
+    .title h1 { margin: 0 0 6px 0; font-size: 28px; }
+    .title p { margin: 0; color: var(--muted); }
+    .pill-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .pill { background: rgba(56, 189, 248, 0.12); color: #bae6fd; border: 1px solid rgba(56, 189, 248, 0.3); padding: 8px 12px; border-radius: 999px; font-size: 12px; }
+    .controls {
+      display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px;
+    }
+    .panel {
+      background: rgba(17, 24, 39, 0.96);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 18px;
+      box-shadow: 0 18px 38px rgba(0, 0, 0, 0.25);
+    }
+    .control-card { padding: 14px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    select, input[type="range"] { width: 100%; }
+    select {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+    }
+    .metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .metric { padding: 14px; }
+    .metric .label { font-size: 12px; color: var(--muted); }
+    .metric .value { font-size: 28px; font-weight: 700; margin-top: 8px; }
+    .metric .sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .layout { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+    .sidebar { padding: 14px; max-height: calc(100vh - 230px); overflow: auto; }
+    .main { display: grid; gap: 16px; }
+    .worker-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid transparent;
+      border-radius: 14px;
+      padding: 12px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: 140ms ease;
+    }
+    .worker-card:hover { border-color: rgba(56, 189, 248, 0.35); transform: translateY(-1px); }
+    .worker-card.active { border-color: rgba(56, 189, 248, 0.7); background: rgba(56, 189, 248, 0.10); }
+    .worker-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .worker-name { font-weight: 700; font-size: 15px; }
+    .badge { padding: 5px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+    .badge.normal { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+    .badge.caution { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+    .badge.high { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+    .muted { color: var(--muted); }
+    .worker-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; margin-top: 8px; color: var(--muted); }
+    .progress { height: 8px; border-radius: 999px; background: rgba(148,163,184,0.14); overflow: hidden; margin-top: 12px; }
+    .progress > span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #38bdf8, #ef4444); }
+    .detail-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; }
+    .detail-card { padding: 16px; }
+    .detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
+    .detail-head h2, .detail-card h3 { margin: 0; }
+    .stats-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+    .stat-box { background: rgba(255,255,255,0.03); border-radius: 14px; padding: 12px; border: 1px solid rgba(148,163,184,0.12); }
+    .stat-box .k { font-size: 12px; color: var(--muted); }
+    .stat-box .v { font-size: 24px; font-weight: 700; margin-top: 6px; }
+    canvas { width: 100%; height: 280px; background: rgba(255,255,255,0.02); border-radius: 14px; border: 1px solid rgba(148,163,184,0.12); }
+    .alerts, .zones { display: grid; gap: 10px; }
+    .alert-item, .zone-item { background: rgba(255,255,255,0.03); border: 1px solid rgba(148,163,184,0.12); border-radius: 14px; padding: 12px; }
+    .alert-top, .zone-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-bottom: 6px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .recommendation { font-size: 14px; line-height: 1.5; color: #dbeafe; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 14px; padding: 12px; }
+    .small { font-size: 12px; color: var(--muted); }
+    .footer-note { margin-top: 14px; font-size: 12px; color: var(--muted); }
+    .timeline-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 10px; }
+    @media (max-width: 1200px) {
+      .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+      .detail-grid, .grid-2, .controls { grid-template-columns: 1fr; }
+      .sidebar { max-height: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <div class="title">
+        <h1>Psychosocial Risk Monitoring Dashboard</h1>
+        <p>Manager-facing prototype for exoskeleton-assisted construction teams. Built from your uploaded CSV sessions.</p>
+      </div>
+      <div class="pill-row">
+        <div class="pill" id="sourcePill"></div>
+        <div class="pill" id="liveStatusPill">Live stream: checking...</div>
+        <div class="pill">Actionable alerts</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="panel control-card">
+        <label for="taskSelect">Monitoring scenario</label>
+        <select id="taskSelect"></select>
+      </div>
+      <div class="panel control-card">
+        <label for="riskFilter">Risk filter</label>
+        <select id="riskFilter">
+          <option value="All">All workers</option>
+          <option value="High">High only</option>
+          <option value="Caution">Caution or High</option>
+          <option value="Normal">Normal only</option>
+        </select>
+      </div>
+      <div class="panel control-card">
+        <label for="timeSlider">Playback time</label>
+        <input id="timeSlider" type="range" min="0" max="100" value="100" />
+        <div class="small" id="timeLabel"></div>
+      </div>
+      <div class="panel control-card">
+        <label for="modeFilter">Mode filter</label>
+        <select id="modeFilter">
+          <option value="All">All modes</option>
+          <option value="Active">Active</option>
+          <option value="Passive">Passive</option>
+          <option value="Live">Live</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="metrics" id="summaryMetrics"></div>
+
+    <div class="layout">
+      <div class="panel sidebar">
+        <div class="detail-head">
+          <h3>Worker queue</h3>
+          <div class="small" id="workerCountLabel"></div>
+        </div>
+        <div id="workerList"></div>
+      </div>
+
+      <div class="main">
+        <div class="detail-grid">
+          <div class="panel detail-card">
+            <div class="detail-head">
+              <div>
+                <h2 id="workerTitle">Worker</h2>
+                <div class="muted" id="workerSubtitle"></div>
+              </div>
+              <div id="workerBadge" class="badge normal">Normal</div>
+            </div>
+            <div class="timeline-head">
+              <div class="small">Stress, fatigue, cognitive load, and overall risk over time</div>
+              <div class="small" id="detailTimestamp"></div>
+            </div>
+            <canvas id="trendChart" width="900" height="280"></canvas>
+            <div class="stats-grid" id="detailStats"></div>
+          </div>
+
+          <div class="panel detail-card">
+            <h3>Current interpretation</h3>
+            <div class="recommendation" id="recommendationBox"></div>
+            <div class="stats-grid" style="margin-top:14px;" id="signalStats"></div>
+            <div class="footer-note">Proxy scores are derived from uploaded EDA, BVP, temperature, task label, and session context.</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="panel detail-card">
+            <div class="detail-head">
+              <h3>Live alert queue</h3>
+              <div class="small">Most recent actionable events</div>
+            </div>
+            <div class="alerts" id="alertList"></div>
+          </div>
+          <div class="panel detail-card">
+            <div class="detail-head">
+              <h3>Site zone snapshot</h3>
+              <div class="small">Workers grouped by area</div>
+            </div>
+            <div class="zones" id="zoneList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  
+  <script>
+    let DATA = null;
+    const REFRESH_MS = 5000;
+
+    const state = {
+      category: null,
+      riskFilter: 'All',
+      modeFilter: 'All',
+      workerId: null,
+      playbackPercent: 100,
+      initialized: false,
+    };
+
+    const taskSelect = document.getElementById('taskSelect');
+    const riskFilter = document.getElementById('riskFilter');
+    const modeFilter = document.getElementById('modeFilter');
+    const timeSlider = document.getElementById('timeSlider');
+    const sourcePill = document.getElementById('sourcePill');
+    const liveStatusPill = document.getElementById('liveStatusPill');
+
+    function initControlsOnce() {
+      if (state.initialized) return;
+      taskSelect.addEventListener('change', () => {
+        state.category = taskSelect.value;
+        state.workerId = null;
+        render();
+      });
+      riskFilter.addEventListener('change', () => {
+        state.riskFilter = riskFilter.value;
+        render();
+      });
+      modeFilter.addEventListener('change', () => {
+        state.modeFilter = modeFilter.value;
+        render();
+      });
+      timeSlider.addEventListener('input', () => {
+        state.playbackPercent = Number(timeSlider.value);
+        renderSummaryAndDetails();
+      });
+      state.initialized = true;
+    }
+
+    async function refreshData(initial = false) {
+      try {
+        const response = await fetch(`./api/dashboard-data?t=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const nextData = await response.json();
+        const previousCategory = state.category;
+        DATA = nextData;
+        syncTaskOptions(previousCategory);
+        updateHeaderPills();
+        render();
+      } catch (error) {
+        sourcePill.textContent = 'Source: dashboard server unavailable';
+        liveStatusPill.textContent = `Live stream: ${error.message}`;
+        if (initial) clearDetailState('Could not load dashboard data yet. Start the server and try again.');
+      }
+    }
+
+    function syncTaskOptions(previousCategory) {
+      if (!DATA) return;
+      const categories = Object.keys(DATA.categories || {});
+      taskSelect.innerHTML = '';
+      categories.forEach(category => {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category;
+        taskSelect.appendChild(option);
+      });
+      if (previousCategory && categories.includes(previousCategory)) state.category = previousCategory;
+      else if (!state.category || !categories.includes(state.category)) state.category = categories[0] || null;
+      taskSelect.value = state.category || '';
+    }
+
+    function updateHeaderPills() {
+      const source = DATA?.generatedFrom || 'historical sessions';
+      sourcePill.textContent = `Source: ${source}`;
+      const live = DATA?.liveStatus || {};
+      const liveText = live.connected
+        ? `Live stream: connected${live.last_update_at ? ` • ${live.last_update_at}` : ''}`
+        : `Live stream: ${live.message || 'waiting for feed'}`;
+      liveStatusPill.textContent = liveText;
+    }
+
+    function currentSessions() {
+      if (!DATA || !state.category) return [];
+      return DATA.categories[state.category] || [];
+    }
+
+    function playbackIndex(records, session) {
+      if (!records || !records.length) return 0;
+      if (session?.mode === 'Live') return records.length - 1;
+      const idx = Math.floor((records.length - 1) * (state.playbackPercent / 100));
+      return Math.max(0, Math.min(records.length - 1, idx));
+    }
+
+    function getCurrentRecord(session) {
+      return session.records[playbackIndex(session.records, session)];
+    }
+
+    function passesFilters(session) {
+      const rec = getCurrentRecord(session);
+      if (!rec) return false;
+      if (state.modeFilter !== 'All' && session.mode !== state.modeFilter) return false;
+      if (state.riskFilter === 'High') return rec.riskBand === 'High';
+      if (state.riskFilter === 'Caution') return ['High', 'Caution'].includes(rec.riskBand);
+      if (state.riskFilter === 'Normal') return rec.riskBand === 'Normal';
+      return true;
+    }
+
+    function filteredSessions() {
+      return currentSessions()
+        .filter(passesFilters)
+        .sort((a, b) => getCurrentRecord(b).risk - getCurrentRecord(a).risk);
+    }
+
+    function ensureSelectedWorker(list) {
+      if (!list.length) {
+        state.workerId = null;
+        return null;
+      }
+      const exists = list.find(item => item.sessionId === state.workerId);
+      if (!exists) state.workerId = list[0].sessionId;
+      return list.find(item => item.sessionId === state.workerId) || list[0];
+    }
+
+    function riskClass(band) {
+      return (band || 'Normal').toLowerCase();
+    }
+
+    function liveModelLine(rec) {
+      if (!rec) return '';
+      const fr = rec.frustrationLabel ? `Frustration ${rec.frustrationLabel}` : null;
+      const md = rec.mentalDemandLabel ? `Mental Demand ${rec.mentalDemandLabel}` : null;
+      return [fr, md].filter(Boolean).join(' • ');
+    }
+
+    function render() {
+      if (!DATA) {
+        clearDetailState('Loading dashboard data...');
+        document.getElementById('workerList').innerHTML = '<div class="small">Loading sessions...</div>';
+        document.getElementById('workerCountLabel').textContent = '0 shown';
+        document.getElementById('summaryMetrics').innerHTML = '';
+        document.getElementById('zoneList').innerHTML = '<div class="small">Loading zone data...</div>';
+        return;
+      }
+      const list = filteredSessions();
+      const selected = ensureSelectedWorker(list);
+      renderWorkerList(list);
+      renderSummaryAndDetails(selected, list);
+    }
+
+    function renderWorkerList(list) {
+      const workerList = document.getElementById('workerList');
+      const workerCountLabel = document.getElementById('workerCountLabel');
+      workerCountLabel.textContent = `${list.length} shown`;
+      workerList.innerHTML = '';
+
+      if (!list.length) {
+        workerList.innerHTML = '<div class="small">No workers match the current filters.</div>';
+        return;
+      }
+
+      list.forEach(session => {
+        const rec = getCurrentRecord(session);
+        const liveLine = session.mode === 'Live' ? `<div class="small" style="margin-top:6px; color:#bfdbfe;">${liveModelLine(rec)}</div>` : '';
+        const div = document.createElement('div');
+        div.className = `worker-card ${session.sessionId === state.workerId ? 'active' : ''}`;
+        div.innerHTML = `
+          <div class="worker-top">
+            <div>
+              <div class="worker-name">${session.workerName}</div>
+              <div class="small">${session.taskType} • ${session.mode} • ${session.zone}</div>
+              ${liveLine}
+            </div>
+            <div class="badge ${riskClass(rec.riskBand)}">${rec.riskBand}</div>
+          </div>
+          <div class="worker-meta">
+            <span>Risk ${rec.risk.toFixed(1)}</span>
+            <span>${session.taskType === 'Frustration' ? 'Stress' : 'Cognitive'} ${session.taskType === 'Frustration' ? rec.stress.toFixed(1) : rec.cognitiveLoad.toFixed(1)}</span>
+            <span>Confidence ${rec.dataConfidence.toFixed(0)}%</span>
+          </div>
+          <div class="progress"><span style="width:${Math.max(6, rec.risk)}%"></span></div>
+        `;
+        div.addEventListener('click', () => {
+          state.workerId = session.sessionId;
+          render();
+        });
+        workerList.appendChild(div);
+      });
+    }
+
+    function renderSummaryAndDetails(selected, listOverride) {
+      const list = listOverride || filteredSessions();
+      renderSummaryMetrics(list);
+      renderZoneSnapshot(list);
+      renderTimeLabel(selected);
+      if (!selected) {
+        clearDetailState();
+        return;
+      }
+      const rec = getCurrentRecord(selected);
+      renderDetail(selected, rec);
+      renderAlerts(selected, rec);
+    }
+
+    function renderTimeLabel(selected) {
+      const label = document.getElementById('timeLabel');
+      if (!selected) {
+        label.textContent = 'No session selected';
+        return;
+      }
+      const rec = getCurrentRecord(selected);
+      label.textContent = selected.mode === 'Live' ? `Live view: ${rec.timestamp}` : `Viewing: ${rec.timestamp}`;
+    }
+
+    function renderSummaryMetrics(list) {
+      const metrics = document.getElementById('summaryMetrics');
+      metrics.innerHTML = '';
+      const records = list.map(getCurrentRecord);
+      const count = records.length;
+      const high = records.filter(r => r.riskBand === 'High').length;
+      const caution = records.filter(r => r.riskBand === 'Caution').length;
+      const liveWorkers = list.filter(s => s.mode === 'Live').length;
+      const avgRisk = count ? records.reduce((sum, r) => sum + r.risk, 0) / count : 0;
+      const avgConfidence = count ? records.reduce((sum, r) => sum + r.dataConfidence, 0) / count : 0;
+      const dominant = (() => {
+        const tally = {'Stress':0,'Fatigue':0,'Cognitive Load':0};
+        records.forEach(r => tally[r.dominantRisk] = (tally[r.dominantRisk] || 0) + 1);
+        return Object.entries(tally).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'N/A';
+      })();
+      const cards = [
+        ['Workers shown', String(count), 'Historical + live queue'],
+        ['Live workers', String(liveWorkers), 'Streaming from wristband'],
+        ['High risk', String(high), 'Immediate attention candidates'],
+        ['Caution', String(caution), 'Monitor and prepare response'],
+        ['Average risk', avgRisk.toFixed(1), 'Across current queue'],
+        ['Avg confidence', `${avgConfidence.toFixed(0)}%`, 'Sensor/model confidence'],
+        ['Dominant pattern', dominant, 'Most common risk driver'],
+      ];
+      cards.forEach(([label, value, sub]) => {
+        const div = document.createElement('div');
+        div.className = 'panel metric';
+        div.innerHTML = `<div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div>`;
+        metrics.appendChild(div);
+      });
+    }
+
+    function renderDetail(session, rec) {
+      const liveDescriptor = session.mode === 'Live'
+        ? `Live inference • ${session.zone}`
+        : `Ground truth ${session.groundTruthLabel} • ${session.zone}`;
+      document.getElementById('workerTitle').textContent = session.workerName;
+      document.getElementById('workerSubtitle').textContent = `${session.participantId} • ${session.taskType} • ${session.mode} • ${liveDescriptor}`;
+      const badge = document.getElementById('workerBadge');
+      badge.className = `badge ${riskClass(rec.riskBand)}`;
+      badge.textContent = rec.riskBand;
+      document.getElementById('detailTimestamp').textContent = rec.timestamp;
+      document.getElementById('recommendationBox').textContent = rec.recommendation;
+
+      const detailStats = document.getElementById('detailStats');
+      detailStats.innerHTML = '';
+      const stats = [
+        ['Current overall risk', rec.risk.toFixed(1)],
+        ['Dominant risk', rec.dominantRisk],
+        ['Peak session risk', session.metrics.peakRisk.toFixed(1)],
+        ['Average confidence', `${session.metrics.avgConfidence.toFixed(0)}%`],
+      ];
+      if (session.mode === 'Live') {
+        stats.push(['Frustration label', rec.frustrationLabel || 'Pending']);
+        stats.push(['Mental Demand label', rec.mentalDemandLabel || 'Pending']);
+      }
+      stats.forEach(([k,v]) => {
+        const box = document.createElement('div');
+        box.className = 'stat-box';
+        box.innerHTML = `<div class="k">${k}</div><div class="v">${v}</div>`;
+        detailStats.appendChild(box);
+      });
+
+      const signalStats = document.getElementById('signalStats');
+      signalStats.innerHTML = '';
+      const signalCards = [
+        ['EDA', rec.eda.toFixed(3)],
+        [session.mode === 'Live' ? 'Pulse rate' : 'BVP', session.mode === 'Live' && rec.pulseRate != null ? rec.pulseRate.toFixed(2) : rec.bvp.toFixed(3)],
+        ['Temp', rec.temperature.toFixed(3)],
+        ['Data confidence', `${rec.dataConfidence.toFixed(0)}%`],
+      ];
+      if (session.mode === 'Live') {
+        signalCards.push(['Frustration conf', rec.frustrationConfidence != null ? `${rec.frustrationConfidence.toFixed(0)}%` : 'Warming up']);
+        signalCards.push(['Mental Demand conf', rec.mentalDemandConfidence != null ? `${rec.mentalDemandConfidence.toFixed(0)}%` : 'Warming up']);
+      }
+      signalCards.forEach(([k,v]) => {
+        const box = document.createElement('div');
+        box.className = 'stat-box';
+        box.innerHTML = `<div class="k">${k}</div><div class="v">${v}</div>`;
+        signalStats.appendChild(box);
+      });
+
+      drawTrendChart(session.records, playbackIndex(session.records, session));
+    }
+
+    function clearDetailState(message = 'Change the filters or choose a worker to view recommendations.') {
+      document.getElementById('workerTitle').textContent = 'No worker selected';
+      document.getElementById('workerSubtitle').textContent = '';
+      document.getElementById('detailTimestamp').textContent = '';
+      document.getElementById('recommendationBox').textContent = message;
+      document.getElementById('detailStats').innerHTML = '';
+      document.getElementById('signalStats').innerHTML = '';
+      document.getElementById('alertList').innerHTML = '<div class="small">No active alerts.</div>';
+      const ctx = document.getElementById('trendChart').getContext('2d');
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
+
+    function renderAlerts(session) {
+      const alertList = document.getElementById('alertList');
+      alertList.innerHTML = '';
+      const upto = playbackIndex(session.records, session);
+      const activeAlerts = session.alerts
+        .filter(alert => (alert.recordIndex ?? upto) <= upto)
+        .slice(-6)
+        .reverse();
+
+      if (!activeAlerts.length) {
+        const div = document.createElement('div');
+        div.className = 'small';
+        div.textContent = 'No caution/high alerts have triggered yet at the current playback time.';
+        alertList.appendChild(div);
+        return;
+      }
+
+      activeAlerts.forEach(alert => {
+        const div = document.createElement('div');
+        div.className = 'alert-item';
+        div.innerHTML = `
+          <div class="alert-top">
+            <strong>${alert.type}</strong>
+            <div class="badge ${riskClass(alert.level)}">${alert.level}</div>
+          </div>
+          <div class="small">${alert.time} • Score ${alert.score.toFixed(1)}</div>
+          <div style="margin-top:6px;">${alert.message}</div>
+          <div class="small" style="margin-top:8px;">${alert.recommendation}</div>
+        `;
+        alertList.appendChild(div);
+      });
+    }
+
+    function renderZoneSnapshot(list) {
+      const zoneList = document.getElementById('zoneList');
+      zoneList.innerHTML = '';
+      const grouped = new Map();
+      list.forEach(session => {
+        const rec = getCurrentRecord(session);
+        const current = grouped.get(session.zone) || { count: 0, high: 0, caution: 0, avgRisk: 0 };
+        current.count += 1;
+        current.avgRisk += rec.risk;
+        if (rec.riskBand === 'High') current.high += 1;
+        if (rec.riskBand === 'Caution') current.caution += 1;
+        grouped.set(session.zone, current);
+      });
+      const zones = Array.from(grouped.entries()).map(([zone, stats]) => ({
+        zone,
+        count: stats.count,
+        high: stats.high,
+        caution: stats.caution,
+        avgRisk: stats.avgRisk / Math.max(1, stats.count),
+      })).sort((a,b)=>b.avgRisk-a.avgRisk);
+
+      if (!zones.length) {
+        zoneList.innerHTML = '<div class="small">No zone data for the current filters.</div>';
+        return;
+      }
+
+      zones.forEach(z => {
+        const div = document.createElement('div');
+        div.className = 'zone-item';
+        div.innerHTML = `
+          <div class="zone-top">
+            <strong>${z.zone}</strong>
+            <span class="small">Avg risk ${z.avgRisk.toFixed(1)}</span>
+          </div>
+          <div class="small">Workers: ${z.count} • High: ${z.high} • Caution: ${z.caution}</div>
+        `;
+        zoneList.appendChild(div);
+      });
+    }
+
+    function drawTrendChart(records, upto) {
+      const canvas = document.getElementById('trendChart');
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = 'rgba(255,255,255,0.02)';
+      ctx.fillRect(0, 0, w, h);
+
+      const pad = { left: 48, right: 18, top: 20, bottom: 32 };
+      const chartW = w - pad.left - pad.right;
+      const chartH = h - pad.top - pad.bottom;
+      const lines = [
+        { key: 'stress', color: '#38bdf8', label: 'Stress' },
+        { key: 'fatigue', color: '#f59e0b', label: 'Fatigue' },
+        { key: 'cognitiveLoad', color: '#c084fc', label: 'Cognitive' },
+        { key: 'risk', color: '#ef4444', label: 'Overall' },
+      ];
+
+      ctx.strokeStyle = 'rgba(148,163,184,0.20)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 5; i++) {
+        const y = pad.top + (chartH / 5) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(w - pad.right, y);
+        ctx.stroke();
+        const value = 100 - i * 20;
+        ctx.fillStyle = 'rgba(148,163,184,0.9)';
+        ctx.font = '12px sans-serif';
+        ctx.fillText(String(value), 8, y + 4);
+      }
+
+      const visible = records.slice(0, upto + 1);
+      const maxPoints = visible.length;
+      if (!maxPoints) return;
+
+      lines.forEach(line => {
+        ctx.strokeStyle = line.color;
+        ctx.lineWidth = line.key === 'risk' ? 3 : 2;
+        ctx.beginPath();
+        visible.forEach((r, idx) => {
+          const x = pad.left + (idx / Math.max(1, maxPoints - 1)) * chartW;
+          const y = pad.top + chartH - (r[line.key] / 100) * chartH;
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+
+      const markerX = pad.left + ((visible.length - 1) / Math.max(1, maxPoints - 1)) * chartW;
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(markerX, pad.top);
+      ctx.lineTo(markerX, h - pad.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const legendX = pad.left;
+      lines.forEach((line, i) => {
+        const x = legendX + i * 140;
+        const y = h - 10;
+        ctx.fillStyle = line.color;
+        ctx.fillRect(x, y - 10, 18, 4);
+        ctx.fillStyle = 'rgba(229,231,235,0.92)';
+        ctx.font = '12px sans-serif';
+        ctx.fillText(line.label, x + 24, y - 6);
+      });
+    }
+
+    async function init() {
+      initControlsOnce();
+      await refreshData(true);
+      setInterval(() => refreshData(false), REFRESH_MS);
+    }
+
+    init();
+  </script>
+
+</body>
+</html>
