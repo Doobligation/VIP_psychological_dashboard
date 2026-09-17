@@ -284,9 +284,10 @@ def build_dataset() -> dict:
 
 def write_files(dataset: dict) -> None:
     OUTPUT_JSON.write_text(json.dumps(dataset, indent=2), encoding='utf-8')
-    OUTPUT_HTML.write_text(build_html(dataset), encoding='utf-8')
-    README.write_text(build_readme(), encoding='utf-8')
-    SERVE.write_text(build_server_script(), encoding='utf-8')
+    # The maintained live frontend/server are no longer generated artifacts.
+    # Rebuilding historical data must not overwrite their sensor/live integration.
+    if not OUTPUT_HTML.exists():
+        OUTPUT_HTML.write_text(build_html(dataset), encoding='utf-8')
 
 
 def build_readme() -> str:
@@ -464,6 +465,7 @@ def build_html(dataset: dict) -> str:
       </div>
     </div>
 
+    <section id="polar-panel" aria-label="Polar H10 sensor">Run npm ci and npm run build to enable the Polar H10 panel.</section>
     <div class="controls">
       <div class="panel control-card">
         <label for="taskSelect">Monitoring scenario</label>
@@ -940,6 +942,7 @@ def build_html(dataset: dict) -> str:
 
     init();
   </script>
+  <script type="module" src="./assets/polar-panel.js"></script>
 </body>
 </html>'''
 

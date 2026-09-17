@@ -2,6 +2,34 @@
 
 This package combines the historical psychosocial dashboard with the live wristband stream and the machine-learning classifiers built from your uploaded data.
 
+## Polar H10 EXG · 200 ms RMS
+
+The sensor panel displays only the existing visualizer's **EXG 200 ms RMS** signal.
+It reuses `polar-h10` for Bluetooth and the filter/RMS implementation extracted from
+[polar-h10-visualizer](https://github.com/yhzhao343/polar-h10-visualizer):
+`src/consts.ts` and `src/PolarH10VisualizerRow.ts`, commit
+`771559bc6ba6e2f13b43f02e1e7b026b1ec7473e` (Yuhui Zhao, ISC).
+The upstream defaults are Fili Butterworth highpass (`order: 4`, cutoff 25 Hz),
+130 Hz EXG sampling, and a 200 ms / 26-sample RMS window over the filtered signal.
+
+
+```bash
+python3 serve_dashboard.py
+```
+
+Open `http://127.0.0.1:8000/psychosocial_dashboard.html` in Chrome or Edge and click
+**Connect Polar H10**. Use localhost or HTTPS and allow Bluetooth access. For
+firmware 4+, pair the H10 in your OS first. The panel shows one RMS value and one
+RMS chart. Disconnect clears the session; missing samples become unavailable after
+five seconds, and unexpected disconnections trigger bounded reconnection attempts.
+
+The integration files are `sensor/driver.js` (existing device library),
+`sensor/controller.js` (EXG connection), `sensor/data.js` (upstream filter/RMS), and
+`sensor/panel.js` (RMS display). The build emits `assets/polar-panel.js`.
+No Polar heart-rate, RR/HRV, acceleration, or raw waveform views are included.
+Existing wristband data, psychological models, and historical dashboard views
+remain independent and unchanged. No test suite is included.
+
 ## What changed
 - The dashboard now pulls live biomarker predictions from `avro_stream_poller_with_ml.py`.
 - A **Live worker** is injected into the worker queue for both dashboard lanes:
