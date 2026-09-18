@@ -1,1 +1,5 @@
 venv
+.env
+__pycache__/
+biomarker_data/
+voice_coach_log.csv
