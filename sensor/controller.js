@@ -55,15 +55,16 @@ export class PolarController {
     this.status(this.attempt ? 'reconnecting' : 'connecting', 'Initializing Polar H10…');
     let failure;
     let timer;
-    const scope = this.makeDriver(this.device, () => {
-      this.packetErrors = (this.packetErrors || 0) + 1;
-    });
-    this.scope = scope;
+    let scope;
     const current = () => this.wanted && generation === this.generation && this.scope === scope;
     const check = () => {
       if (!current() || !this.device.gatt?.connected) throw new Error('Sensor disconnected or connection cancelled');
     };
     try {
+      scope = this.makeDriver(this.device, () => {
+        this.packetErrors = (this.packetErrors || 0) + 1;
+      });
+      this.scope = scope;
       const setup = async () => {
         const p = scope.driver;
         p.addEventListener('ECG', (frame) => {

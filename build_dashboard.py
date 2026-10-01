@@ -465,7 +465,7 @@ def build_html(dataset: dict) -> str:
       </div>
     </div>
 
-    <section id="polar-panel" aria-label="Polar H10 sensor">Run npm ci and npm run build to enable the Polar H10 panel.</section>
+    <section id="polar-panel" aria-label="Polar H10 sensor">Loading Polar H10 panel… If it does not appear, use the local server and check that the assets folder is present.</section>
     <div class="controls">
       <div class="panel control-card">
         <label for="taskSelect">Monitoring scenario</label>

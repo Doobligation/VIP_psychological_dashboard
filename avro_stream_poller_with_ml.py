@@ -2,23 +2,26 @@ import os
 import time
 from datetime import datetime, timezone, timedelta
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import boto3
 import pandas as pd
 from flask import Flask, jsonify
 
 from biomarker_runtime import LiveBiomarkerPredictor
 
-AWS_ACCESS_KEY_ID = ""
-AWS_SECRET_ACCESS_KEY = ""
-AWS_REGION = "us-east-1"
+AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
+AWS_SECRET_ACCESS_KEY = os.environ["AWS_SECRET_ACCESS_KEY"]
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 S3_BUCKET = "empatica-us-east-1-prod-data"
-S3_BASE_PREFIX = "v2/597/1/1/participant_data/"
+S3_BASE_PREFIX = "v2/1324/1/1/participant_data/"
 POLL_SECONDS = 30
 
 FORCE_DOWNLOAD_EVERY_POLL = False
 
-LOCAL_BIOMARKER_DIR = r""
+LOCAL_BIOMARKER_DIR = os.path.join(os.path.dirname(__file__), "biomarker_data")
 os.makedirs(LOCAL_BIOMARKER_DIR, exist_ok=True)
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
@@ -315,4 +318,4 @@ if __name__ == "__main__":
     import threading
 
     threading.Thread(target=poll_loop, daemon=True).start()
-    app.run(host="0.0.0.0", port=7000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 7001)))

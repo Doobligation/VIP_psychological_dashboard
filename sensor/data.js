@@ -1,4 +1,6 @@
-import { CalcCascades, IirFilter } from 'fili';
+import Fili from 'fili';
+
+const { CalcCascades, IirFilter } = Fili;
 
 // Extracted from Yuhui Zhao's polar-h10-visualizer:
 // src/consts.ts (initECGFilterSettings) and
