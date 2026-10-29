@@ -1,0 +1,4 @@
+# The rule pipeline and local SQLite server use the Python standard library.
+# Install these extras for ML training and XLSX table/recording imports.
+-r requirements-polar.txt
+-r requirements-polar-ml.txt

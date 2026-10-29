@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from live_dashboard_backend import LiveDashboardBridge
+from serving.server import FeedbackAPIMixin, private_path
 
 ROOT = Path(__file__).resolve().parent
 PORT = 8000
@@ -17,11 +18,15 @@ bridge = LiveDashboardBridge(ROOT / 'dashboard_data.json', live_url=LIVE_STREAM_
 bridge.start()
 
 
-class Handler(SimpleHTTPRequestHandler):
+class Handler(FeedbackAPIMixin, SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
     def do_GET(self):
+        if self.handle_feedback_api():
+            return
+        if private_path(self.path, ROOT):
+            return self._feedback_json({'error': 'Private runtime files are not served.'}, 403)
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -40,6 +45,30 @@ class Handler(SimpleHTTPRequestHandler):
             return super().do_GET()
 
         return super().do_GET()
+
+    def do_POST(self):
+        if self.handle_feedback_api():
+            return
+        return self._feedback_json({'error': 'Unknown endpoint.'}, 404)
+
+    do_PUT = do_POST
+    do_PATCH = do_POST
+    do_DELETE = do_POST
+    do_OPTIONS = do_POST
+
+    def do_HEAD(self):
+        if self.handle_feedback_api():
+            return
+        if private_path(self.path, ROOT):
+            self.send_response(403)
+            self.end_headers()
+            return
+        if self.path == '/':
+            self.path = '/psychosocial_dashboard.html'
+        return super().do_HEAD()
+
+    def list_directory(self, path):
+        return self.send_error(403, 'Directory listings are disabled.')
 
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')

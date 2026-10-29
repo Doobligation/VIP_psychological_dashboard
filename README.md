@@ -2,13 +2,47 @@
 
 This package combines the historical psychosocial dashboard with the live wristband stream and the machine-learning classifiers built from your uploaded data.
 
-## Polar H10 EXG · 200 ms RMS
+## Team 3: Frustration and fatigue prediction and feedback
+
+Predicts **Low / Medium / High** frustration and fatigue risk from % change against a
+resting baseline (EDA, SCR, HR, RMSSD, SDNN) using the DBR masterfile rules. **Only High
+risk gives feedback, and only after 3 consecutive High predictions**; a Low or Medium
+prediction resets the count. Thresholds and messages live in `config/`, not in code.
+
+```bash
+python3 serve_dashboard.py
+# open http://127.0.0.1:8000/serving/dashboard.html and click "Run scripted demo"
+```
+
+Course handouts (the DBR masterfile PDFs and instructor notes) are not included in this
+public repository; docs cite them by name. The design, derived thresholds, tests and limitations are in
+[the Team 3 guide](docs/TEAM3_FRUSTRATION_FATIGUE.md). The Polar H10 panel below uses
+the same server-side decision engine.
+
+## Group 1: Polar H10 fatigue and posture
+
+Start with [the Group 1 handoff](docs/GROUP1_HANDOFF.md). It explains what the
+assignment asks for, how it extends the earlier Polar handoff, and the exact
+threshold/cause/feedback table to discuss with the team.
+
+The active fatigue workflow follows the newest section of `fatigue` and
+uses **rules only**. See [the current fatigue guide](docs/FATIGUE_RULES.md) for the
+exact low/medium/high conditions and data requirements. No model JSON is needed.
+The prior [professor workflow](docs/PROFESSOR_WORKFLOW.md) documents the underlying
+storage and feedback architecture; its model-enablement instructions are superseded.
+
+Live HR/RR provides RMSSD/SDNN and a personal resting baseline. Low and medium fatigue
+use HRV changes; high additionally requires HR change below +10% and EDA change below
++15%. H10 has no EDA sensor, so missing EDA explicitly limits high-rule assessment.
+The dashboard retains calibrated posture, feedback timing/cooldowns, local SQLite
+readings/alerts/responses/outcomes, independent ratings and exports. **Start demo**
+runs synthetic HR/RR plus EDA at 20× to demonstrate all three fatigue levels.
 
 The Polar integration is on `feature/polar-h10-dashboard`, based on
 `lexiliiii/VIP_psychological_dashboard`'s `polar-h10-integration` branch
 (`c729e4d`) with this repository's voice-coach work merged in.
 
-The sensor panel displays only the existing visualizer's **EXG 200 ms RMS** signal.
+The sensor panel also retains the existing visualizer's **EXG 200 ms RMS** signal.
 It reuses `polar-h10` for Bluetooth and the filter/RMS implementation extracted from
 [polar-h10-visualizer](https://github.com/yhzhao343/polar-h10-visualizer):
 `src/consts.ts` and `src/PolarH10VisualizerRow.ts`, commit
@@ -30,15 +64,32 @@ Open `http://127.0.0.1:8000/psychosocial_dashboard.html` in Chrome or Edge and c
 firmware 4+, pair the H10 in your OS first. The panel shows one RMS value and one
 RMS chart. Disconnect clears the session; missing samples become unavailable after
 five seconds, and unexpected disconnections trigger bounded reconnection attempts.
+Enter a participant ID before connecting, capture a resting baseline, and calibrate
+upright posture. Every reconnection needs fresh calibration. The panel's rule
+details explain thresholds and measurement availability.
 
 The integration files are `sensor/driver.js` (existing device library),
-`sensor/controller.js` (EXG connection), `sensor/data.js` (upstream filter/RMS), and
-`sensor/panel.js` (RMS display). The build emits `assets/polar-panel.js`.
-No Polar heart-rate, RR/HRV, acceleration, or raw waveform views are included.
+`sensor/controller.js` (stream connection), `sensor/data.js` (upstream filter/RMS),
+`sensor/fatigue.js` (HRV, calibration, rules and persistence), `sensor/panel.js`
+(RMS display), and `sensor/study-panel.js` (Group 1 workflow, demo, speech and export).
+The build emits `assets/polar-panel.js`. The accelerometer runs at 25 Hz with a
+4 g range. Only pitch/roll tilt is evaluated; yaw and arm elevation are not inferred.
 Existing wristband data, psychological models, and historical dashboard views
 remain independent. The worker/scenario/playback controls do not assign the
-Polar signal to a worker. RMS readings stay in browser memory and are not
-saved, exported, or sent to the psychological models or voice coach.
+Polar signal to a worker. The explicit participant field applies to the Polar
+session only. **Export session JSON** downloads up to the latest 10,000 summary
+observations, baseline values, feedback events, independent fatigue ratings. This browser export is not a raw ECG recording. **Download saved session**
+exports the durable database log, including submitted HR/RR packets and decisions.
+The **Local feedback loop** shows pending or dropped deliveries; wait for pending
+readings and export browser-only ratings before leaving. Data is stored locally under
+`.local/`, excluded from Git and static serving. Polar speech is delivered by the
+browser from issued local-server alerts; the separate wristband voice coach remains
+independent.
+
+For recorded CSV/XLSX data, `polar_recordings.py` converts explicit Unix timestamp
+units to UTC and computes accelerometer bending angles. Examples, optional Excel
+dependencies and column-mapping commands are in the handoff. CSV needs no extra
+Python packages; XLSX needs `python3 -m pip install -r requirements-polar.txt`.
 
 The dashboard's **Live stream unavailable** message and the server's port 7000
 message refer to the separate wristband feed. Check the status inside the
@@ -50,7 +101,9 @@ message refer to the separate wristband feed. Check the status inside the
 1. Enable Bluetooth and prepare/wear the H10 with moistened strap contacts.
 2. Click **Connect Polar H10**, choose your sensor, and grant Bluetooth access.
 3. Confirm **Receiving EXG**, a numeric µV RMS value, and a moving trace.
-4. Click **Disconnect** and confirm the value and chart clear. Connect again
+4. Confirm HR/RR arrive, capture a baseline while resting, and calibrate while
+   upright. Verify posture changes with controlled movements and export a session.
+5. Click **Disconnect** and confirm the value and chart clear. Connect again
    to start a new session. If pairing fails, check OS pairing, battery/range,
    permissions, and whether another app is using the H10.
 
@@ -70,11 +123,13 @@ Commit `assets/polar-panel.js` whenever `sensor/` changes. The lockfile pins
 `polar-h10`, Fili, and build/test tooling. Third-party attribution is in
 `assets/polar-licenses.txt`. If Chromium is already installed elsewhere, set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its executable path. Browser tests start the
-Python server automatically (or reuse a running server on port 8000); set
+Python server with a temporary study database automatically (port 8000 must be free); set
 `PYTHON` if your Python command has a different name.
 
-Tests cover the filter/RMS pipeline, freshness, connection failures, retries,
-and the shipped bundle with simulated Bluetooth packets. They do **not**
+Tests cover the filter/RMS pipeline, HR/RR decoding, baseline/HRV calculations,
+fatigue and posture thresholds, feedback persistence, stale data, connection
+failures, bounded retries, exports, CSV/XLSX conversion, and the shipped bundle
+with simulated Bluetooth packets. They do **not**
 validate real radio connectivity or sensor accuracy; complete the sensor check
 above with an H10 before a live session. Historical regeneration preservation
 can also be checked with `python3 -m unittest discover -s tests -p 'test_*.py'`

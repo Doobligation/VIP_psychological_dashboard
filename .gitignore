@@ -7,3 +7,4 @@ voice_coach_log.csv
 node_modules/
 test-results/
 playwright-report/
+.local/

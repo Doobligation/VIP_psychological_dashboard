@@ -26,9 +26,15 @@ function harness(t, options = {}) {
         disposed: false,
         dispose() { this.disposed = true; },
         driver: {
-          addEventListener(type, handler) { assert.equal(type, 'ECG'); scope.onFrame = handler; },
+          addEventListener(type, handler) {
+            if (type === 'ECG') scope.onFrame = handler;
+            else if (type === 'ACC') scope.onAcc = handler;
+            else throw new Error(`Unexpected stream ${type}`);
+          },
+          addHeartRateEventListener(handler) { scope.onHeartRate = handler; },
           async init() { device.gatt.connected = true; },
           async startECG(rate) { assert.equal(rate, 130); return { error: 'SUCCESS' }; },
+          async startACC(range, rate) { assert.equal(range, 4); assert.equal(rate, 25); return { error: 'SUCCESS' }; },
         },
       };
       scopes.push(scope);
@@ -125,4 +131,51 @@ test('driver construction failures are reported and release the busy state', asy
   assert.equal(controller.busy, false);
   assert.equal(controller.wanted, false);
   assert.match(controller.message, /GATT unavailable/);
+});
+
+test('HR and acceleration feed the separate fatigue session and reset on disconnect', async (t) => {
+  const { controller, scopes } = harness(t);
+  await controller.connect();
+  assert.equal(typeof scopes[0].onHeartRate, 'function');
+  assert.equal(typeof scopes[0].onAcc, 'function');
+  const now = Date.now();
+  scopes[0].onHeartRate({ heart_rate_bpm: 75, rr_intervals_ms: [800, 820], recv_epoch_time_ms: now });
+  assert.equal(controller.fatigue.snapshot(now).hr, 75);
+  controller.disconnect();
+  scopes[0].onHeartRate({ heart_rate_bpm: 180, rr_intervals_ms: [400], recv_epoch_time_ms: now + 1000 });
+  assert.equal(controller.fatigue.snapshot(now + 1000).hr, null);
+});
+
+test('an unavailable accelerometer does not tear down HR or EXG', async (t) => {
+  const { controller, scopes } = harness(t);
+  const make = controller.makeDriver;
+  controller.makeDriver = () => {
+    const scope = make();
+    scope.driver.startACC = async () => ({ error: 'NOT SUPPORTED' });
+    return scope;
+  };
+  await controller.connect();
+  assert.equal(controller.state, 'connected');
+  assert.match(controller.accMessage, /NOT SUPPORTED/);
+  assert.equal(scopes[0].disposed, false);
+});
+
+test('HR arriving during failed stream setup cannot restart the retry budget', async (t) => {
+  const { controller, device } = harness(t, { maxRetries: 1 });
+  const make = controller.makeDriver;
+  controller.makeDriver = () => {
+    const scope = make();
+    scope.driver.init = async () => {
+      device.gatt.connected = true;
+      scope.onHeartRate({ heart_rate_bpm: 75, rr_intervals_ms: [800], recv_epoch_time_ms: Date.now() });
+    };
+    scope.driver.startECG = async () => { throw new Error('EXG refused'); };
+    return scope;
+  };
+  await controller.connect();
+  t.mock.timers.tick(10);
+  await setImmediate();
+  assert.equal(controller.state, 'error');
+  assert.equal(controller.wanted, false);
+  assert.match(controller.message, /exhausted/);
 });

@@ -4,6 +4,31 @@ export { SERVICES };
 
 const deviceOwners = new WeakMap();
 
+// Bluetooth Heart Rate Measurement: RR is in 1/1024 seconds on the wire.
+// The upstream decoder does not skip the optional Energy Expended field.
+export function decodeHeartRate(value, receivedAt = Date.now()) {
+  const requireBytes = (offset, size) => {
+    if (!value || offset + size > value.byteLength) throw new Error('Truncated heart-rate measurement');
+  };
+  requireBytes(0, 1);
+  const flags = value.getUint8(0);
+  let offset = 1;
+  requireBytes(offset, flags & 1 ? 2 : 1);
+  const heart_rate_bpm = flags & 1 ? value.getUint16(offset, true) : value.getUint8(offset);
+  offset += flags & 1 ? 2 : 1;
+  if (flags & 8) { requireBytes(offset, 2); offset += 2; }
+  const rr_intervals_ms = [];
+  if (flags & 16) {
+    while (offset < value.byteLength) {
+      requireBytes(offset, 2);
+      rr_intervals_ms.push(value.getUint16(offset, true) * 1000 / 1024);
+      offset += 2;
+    }
+  }
+  return { heart_rate_bpm, rr_intervals_ms, recv_epoch_time_ms: receivedAt,
+    contact: flags & 4 ? Boolean(flags & 2) : null };
+}
+
 // Upstream registers bound native listeners without a dispose API. Track them so
 // reconnecting does not leave old drivers subscribed to the same characteristics.
 export function createDriver(device, onPacketError = () => {}) {
@@ -56,6 +81,10 @@ export function createDriver(device, onPacketError = () => {}) {
     return proxy;
   };
   const driver = new PolarH10(wrap(device), false);
+  driver.HearRateHandle = (event) => {
+    const measurement = decodeHeartRate(event.target.value);
+    for (const handler of driver.heartRateHandleList) handler(measurement);
+  };
   return {
     driver,
     dispose() {

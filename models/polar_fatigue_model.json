@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "modelType": "multinomial-logistic-regression",
+  "features": [
+    "hrChangePct",
+    "rmssdChangePct",
+    "sdnnChangePct"
+  ],
+  "classes": [
+    "none",
+    "low",
+    "medium",
+    "high",
+    "very-high"
+  ],
+  "mean": [
+    57.382376667198066,
+    -38.61522659681129,
+    -40.1939291272422
+  ],
+  "scale": [
+    36.37748537511871,
+    42.04231970346336,
+    41.09875539993171
+  ],
+  "coefficients": [
+    [
+      -0.8082053341955112,
+      3.4250751357044744,
+      2.960194487960305
+    ],
+    [
+      -0.28889122185566485,
+      1.0437397334763032,
+      0.5785456930242692
+    ],
+    [
+      0.05302863265569136,
+      -0.15184887011034331,
+      0.03373079995518525
+    ],
+    [
+      -0.025048210580284135,
+      -1.1873519248415991,
+      -0.9391314635951713
+    ],
+    [
+      1.0691161339757584,
+      -3.1296140742288188,
+      -2.633339517344595
+    ]
+  ],
+  "intercepts": [
+    -0.7926130844145354,
+    1.1476783363525644,
+    0.9550078117738899,
+    0.37162636777614194,
+    -1.6816994314880123
+  ],
+  "featureMin": [
+    -19.96371839728831,
+    -94.99763551585272,
+    -94.9818240962567
+  ],
+  "featureMax": [
+    119.9494321813732,
+    99.73872034837144,
+    99.44226732247701
+  ],
+  "training": {
+    "source": "synthetic-bootstrap",
+    "samples": 3000,
+    "participants": 0,
+    "classCounts": {
+      "none": 600,
+      "low": 600,
+      "medium": 600,
+      "high": 600,
+      "very-high": 600
+    },
+    "regularizationC": 1.0,
+    "sklearnVersion": "1.8.0",
+    "labelDefinition": "Assignment threshold labels",
+    "scope": "synthetic-starter"
+  },
+  "evaluation": {
+    "status": "not-applicable",
+    "reason": "Synthetic rule examples cannot establish worker fatigue accuracy."
+  },
+  "modelId": "polar-88f2abc0e9496775"
+}

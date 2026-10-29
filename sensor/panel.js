@@ -1,4 +1,7 @@
 import { PolarController } from './controller.js';
+import { mountStudyPanel } from './study-panel.js';
+import { FatigueSession } from './fatigue.js';
+import { loadRuleConfiguration } from './rule-config.js';
 
 export function drawChart(canvas, points, { now = Date.now(), windowMs = 10000, unit = 'µV', gapMs = 1000 } = {}) {
   const ctx = canvas.getContext('2d');
@@ -67,29 +70,38 @@ export function mountPolarPanel(root) {
       <button type="button" id="polar-disconnect" disabled>Disconnect</button></div></div>
     <p id="polar-status" role="status" aria-live="polite"></p>
     <p><strong id="polar-rms-value">—</strong> µV RMS</p>
-    <canvas id="polar-rms" width="1200" height="180" aria-label="Live EXG 200 millisecond RMS in microvolts"></canvas>`;
+    <canvas id="polar-rms" width="1200" height="180" aria-label="Live EXG 200 millisecond RMS in microvolts"></canvas>
+    <div id="polar-study"></div>`;
   const el = id => root.querySelector(`#polar-${id}`);
   const text = (id, value) => {
     const node = el(id);
     if (node.textContent !== value) node.textContent = value;
   };
-  const controller = new PolarController({ onChange: render });
+  let configReady = false, configError = null;
+  const controller = new PolarController({ onChange: render, onSample: frame => study.recordSample(frame) });
+  const study = mountStudyPanel(el('study'), controller);
+  study.refreshRules();
+  loadRuleConfiguration().then(() => {
+    controller.fatigue = new FatigueSession(); study.refreshRules(); configReady = true; render();
+  }).catch(error => { configError = error.message; render(); });
   function render() {
     const c = controller;
     const connected = c.state === 'connected';
-    text('status', connected
+    text('status', !configReady ? (configError || 'Loading feedback rules…') : connected
       ? `${c.device.name || 'Polar H10'} · ${c.data.fresh() ? 'Receiving EXG' : 'EXG missing or stale'}`
       : c.message);
-    el('connect').disabled = c.busy || c.wanted;
+    el('connect').disabled = !configReady || c.busy || c.wanted;
+    root.querySelector('#polar-demo').disabled = !configReady;
     el('disconnect').disabled = !c.wanted && !c.busy;
     const latest = c.data.rms.at(-1);
     text('rms-value', connected && c.data.fresh() && latest ? latest.values[0].toFixed(1) : '—');
     drawChart(el('rms'), c.data.rms);
+    study.render();
   }
-  el('connect').addEventListener('click', () => void controller.connect());
-  el('disconnect').addEventListener('click', () => controller.disconnect());
+  el('connect').addEventListener('click', () => { study.beginLive(); void controller.connect(); });
+  el('disconnect').addEventListener('click', () => { globalThis.speechSynthesis?.cancel(); controller.disconnect(); });
   let timer = setInterval(render, 100);
-  const pause = () => { clearInterval(timer); controller.disconnect(); };
+  const pause = () => { clearInterval(timer); study.pause(); controller.disconnect(); };
   const resume = (event) => {
     if (event.persisted) {
       clearInterval(timer);
@@ -99,6 +111,7 @@ export function mountPolarPanel(root) {
   };
   const dispose = () => {
     pause();
+    study.dispose();
     window.removeEventListener('pagehide', pause);
     window.removeEventListener('pageshow', resume);
   };

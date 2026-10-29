@@ -1,11 +1,13 @@
 import { createDriver, SERVICES } from './driver.js';
 import { PolarData } from './data.js';
+import { FatigueSession } from './fatigue.js';
 
 export class PolarController {
   constructor({ bluetooth = globalThis.navigator?.bluetooth, makeDriver = createDriver,
-    data = new PolarData(), onChange = () => {}, retryBaseMs = 1000,
+    data = new PolarData(), fatigue = new FatigueSession(), onChange = () => {}, onSample = () => {}, retryBaseMs = 1000,
     maxRetries = 5, timeoutMs = 20000 } = {}) {
-    Object.assign(this, { bluetooth, makeDriver, data, onChange, retryBaseMs, maxRetries, timeoutMs });
+    Object.assign(this, { bluetooth, makeDriver, data, fatigue, onChange, onSample, retryBaseMs, maxRetries, timeoutMs });
+    this.accMessage = '';
     this.state = 'idle';
     this.message = 'No Polar H10 connected.';
     this.generation = 0;
@@ -16,6 +18,7 @@ export class PolarController {
       if (!this.wanted || this.busy) return;
       this.release();
       this.data.reset();
+      this.fatigue.reset();
       this.scheduleRetry('Sensor disconnected.');
     };
   }
@@ -52,6 +55,8 @@ export class PolarController {
     if (this.busy || !this.wanted || generation !== this.generation) return;
     this.busy = true;
     this.data.reset();
+    this.fatigue.reset();
+    this.accMessage = '';
     this.status(this.attempt ? 'reconnecting' : 'connecting', 'Initializing Polar H10…');
     let failure;
     let timer;
@@ -67,13 +72,34 @@ export class PolarController {
       this.scope = scope;
       const setup = async () => {
         const p = scope.driver;
+        p.addHeartRateEventListener?.((frame) => {
+          if (current()) {
+            this.fatigue.heartRate(frame);
+            this.onSample(frame);
+            if (this.state === 'connected' && frame.contact !== false &&
+                Number.isFinite(frame.heart_rate_bpm) && frame.heart_rate_bpm > 0) this.attempt = 0;
+          }
+        });
+        p.addEventListener('ACC', (frame) => {
+          if (current()) this.fatigue.accelerometer(frame);
+        });
         p.addEventListener('ECG', (frame) => {
           if (current()) {
             this.data.waveform(frame);
-            if (this.data.fresh()) this.attempt = 0;
+            if (this.state === 'connected' && this.data.fresh()) this.attempt = 0;
           }
         });
         await p.init(100);
+        check();
+        try {
+          const accReply = await p.startACC(4, 25, 16);
+          if (!['SUCCESS', 'ALREADY IN STATE'].includes(accReply?.error))
+            throw new Error(accReply?.error || 'No accelerometer start acknowledgement');
+          this.accMessage = 'Accelerometer enabled at 25 Hz.';
+        } catch (error) {
+          // Posture is optional: preserve independently available HR/RR and EXG.
+          if (current()) this.accMessage = `Posture unavailable: ${error.message}`;
+        }
         check();
         const reply = await p.startECG(130);
         if (!['SUCCESS', 'ALREADY IN STATE'].includes(reply?.error))
@@ -127,6 +153,8 @@ export class PolarController {
     this.device?.removeEventListener('gattserverdisconnected', this.lost);
     this.device?.gatt?.disconnect();
     this.data.reset();
+    this.fatigue.reset();
+    this.accMessage = '';
     this.status('idle', 'Disconnected. Connect to start a new sensor session.');
   }
 }

@@ -1,0 +1,856 @@
+{
+  "schemaVersion": 1,
+  "version": "team3-frustration-fatigue-2026-10-29",
+  "scoreSemantics": "Heuristic rule severity score; not a calibrated physiological probability.",
+  "riskLevels": [
+    "low",
+    "medium",
+    "high"
+  ],
+  "featurePolicy": {
+    "windowSeconds": 5,
+    "freshSeconds": 2,
+    "minRr": 3,
+    "rrMinMs": 300,
+    "rrMaxMs": 2000,
+    "baselineSamples": 3
+  },
+  "probabilityBands": [
+    {
+      "level": "none",
+      "severity": 0,
+      "min": 0,
+      "score": 0
+    },
+    {
+      "level": "low",
+      "severity": 1,
+      "min": 0.1,
+      "score": 0.2
+    },
+    {
+      "level": "medium",
+      "severity": 2,
+      "min": 0.35,
+      "score": 0.45
+    },
+    {
+      "level": "high",
+      "severity": 3,
+      "min": 0.6,
+      "score": 0.7
+    }
+  ],
+  "states": {
+    "frustration": {
+      "enabled": true,
+      "method": "rules-only",
+      "defaultLevel": "low",
+      "requiredSignals": [
+        "edaChangePct",
+        "scrChangePct",
+        "hrChangePct",
+        "rmssdChangePct",
+        "sdnnChangePct"
+      ],
+      "minEvidence": 5,
+      "causes": {
+        "rework-repeated-task-failure": {
+          "label": "Rework / Repeated Task Failure",
+          "pattern": {
+            "EDA": "↑↑",
+            "SCR": "↑↑",
+            "HR": "↑",
+            "RMSSD": "↓",
+            "SDNN": "↓"
+          }
+        },
+        "schedule-pressure": {
+          "label": "Schedule Pressure",
+          "pattern": {
+            "EDA": "↑",
+            "SCR": "↑",
+            "HR": "↑↑",
+            "RMSSD": "↓↓",
+            "SDNN": "↓↓"
+          }
+        },
+        "equipment-tool-problems": {
+          "label": "Equipment / Tool Problems",
+          "pattern": {
+            "EDA": "↑↑",
+            "SCR": "↑",
+            "HR": "↑",
+            "RMSSD": "↓",
+            "SDNN": "↓"
+          }
+        },
+        "material-shortage-waiting-time": {
+          "label": "Material Shortage / Waiting Time",
+          "pattern": {
+            "EDA": "slight ↑",
+            "SCR": "slight ↑",
+            "HR": "slight ↑",
+            "RMSSD": "↓",
+            "SDNN": "↓"
+          }
+        },
+        "poor-communication-unclear-instructions": {
+          "label": "Poor Communication / Unclear Instructions",
+          "pattern": {
+            "EDA": "↑↑",
+            "SCR": "↑",
+            "HR": "↑",
+            "RMSSD": "↓↓",
+            "SDNN": "↓↓"
+          }
+        }
+      },
+      "rules": [
+        {
+          "cause": "rework-repeated-task-failure",
+          "level": "high",
+          "severity": 3,
+          "score": 0.7,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 30
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 40
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -25
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -25
+            }
+          ],
+          "explanation": "High frustration: the Rework / Repeated Task Failure pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "rework-repeated-task-failure",
+          "level": "medium",
+          "severity": 2,
+          "score": 0.45,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 20
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 25
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -15
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -15
+            }
+          ],
+          "explanation": "Medium frustration: the Rework / Repeated Task Failure pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "rework-repeated-task-failure",
+          "level": "low",
+          "severity": 1,
+          "score": 0.2,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 5
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -10
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -10
+            }
+          ],
+          "explanation": "Low frustration: the Rework / Repeated Task Failure pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "schedule-pressure",
+          "level": "high",
+          "severity": 3,
+          "score": 0.7,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 25
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 25
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 20
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -30
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -30
+            }
+          ],
+          "explanation": "High frustration: the Schedule Pressure pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "schedule-pressure",
+          "level": "medium",
+          "severity": 2,
+          "score": 0.45,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -20
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -20
+            }
+          ],
+          "explanation": "Medium frustration: the Schedule Pressure pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "schedule-pressure",
+          "level": "low",
+          "severity": 1,
+          "score": 0.2,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -10
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -10
+            }
+          ],
+          "explanation": "Low frustration: the Schedule Pressure pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "equipment-tool-problems",
+          "level": "high",
+          "severity": 3,
+          "score": 0.7,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 30
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 25
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -25
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -25
+            }
+          ],
+          "explanation": "High frustration: the Equipment / Tool Problems pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "equipment-tool-problems",
+          "level": "medium",
+          "severity": 2,
+          "score": 0.45,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 20
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -15
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -15
+            }
+          ],
+          "explanation": "Medium frustration: the Equipment / Tool Problems pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "equipment-tool-problems",
+          "level": "low",
+          "severity": 1,
+          "score": 0.2,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 5
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -10
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -10
+            }
+          ],
+          "explanation": "Low frustration: the Equipment / Tool Problems pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "material-shortage-waiting-time",
+          "level": "high",
+          "severity": 3,
+          "score": 0.7,
+          "match": "all",
+          "minEvidence": 8,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "edaChangePct",
+              "operator": "<",
+              "value": 15
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": "<",
+              "value": 15
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": "<",
+              "value": 10
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -25
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -25
+            }
+          ],
+          "explanation": "High frustration: the Material Shortage / Waiting Time pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "material-shortage-waiting-time",
+          "level": "medium",
+          "severity": 2,
+          "score": 0.45,
+          "match": "all",
+          "minEvidence": 8,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "edaChangePct",
+              "operator": "<",
+              "value": 15
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": "<",
+              "value": 15
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": "<",
+              "value": 10
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -15
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -15
+            }
+          ],
+          "explanation": "Medium frustration: the Material Shortage / Waiting Time pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "material-shortage-waiting-time",
+          "level": "low",
+          "severity": 1,
+          "score": 0.2,
+          "match": "all",
+          "minEvidence": 8,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "edaChangePct",
+              "operator": "<",
+              "value": 15
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": "<",
+              "value": 15
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 0
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": "<",
+              "value": 10
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -10
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -10
+            }
+          ],
+          "explanation": "Low frustration: the Material Shortage / Waiting Time pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "poor-communication-unclear-instructions",
+          "level": "high",
+          "severity": 3,
+          "score": 0.7,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 30
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 25
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -30
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -30
+            }
+          ],
+          "explanation": "High frustration: the Poor Communication / Unclear Instructions pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "poor-communication-unclear-instructions",
+          "level": "medium",
+          "severity": 2,
+          "score": 0.45,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 20
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -20
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -20
+            }
+          ],
+          "explanation": "Medium frustration: the Poor Communication / Unclear Instructions pattern in the DBR masterfile matches the measured baseline changes."
+        },
+        {
+          "cause": "poor-communication-unclear-instructions",
+          "level": "low",
+          "severity": 1,
+          "score": 0.2,
+          "match": "all",
+          "minEvidence": 5,
+          "conditions": [
+            {
+              "signal": "edaChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "scrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 5
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -10
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -10
+            }
+          ],
+          "explanation": "Low frustration: the Poor Communication / Unclear Instructions pattern in the DBR masterfile matches the measured baseline changes."
+        }
+      ]
+    },
+    "fatigue": {
+      "enabled": true,
+      "defaultLevel": "low",
+      "requiredSignals": [
+        "rmssdChangePct",
+        "sdnnChangePct"
+      ],
+      "minEvidence": 2,
+      "rules": [
+        {
+          "cause": "fatigue-related-stress",
+          "level": "high",
+          "severity": 3,
+          "score": 0.7,
+          "match": "all",
+          "minEvidence": 4,
+          "conditions": [
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -35
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -30
+            },
+            {
+              "signal": "hrChangePct",
+              "operator": "<",
+              "value": 10
+            },
+            {
+              "signal": "edaChangePct",
+              "operator": "<",
+              "value": 15
+            }
+          ],
+          "explanation": "The high fatigue-related stress rule (DBR section 6) in the fatigue document matches the measured baseline changes."
+        },
+        {
+          "cause": "fatigue-related-stress",
+          "level": "medium",
+          "severity": 2,
+          "score": 0.45,
+          "match": "all",
+          "minEvidence": 2,
+          "conditions": [
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -25
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -20
+            }
+          ],
+          "explanation": "The medium fatigue-related stress rule (DBR section 6) in the fatigue document matches the measured baseline changes."
+        },
+        {
+          "cause": "fatigue-related-stress",
+          "level": "low",
+          "severity": 1,
+          "score": 0.2,
+          "match": "all",
+          "minEvidence": 2,
+          "conditions": [
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -15
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -15
+            }
+          ],
+          "explanation": "The low fatigue-related stress rule (DBR section 6) in the fatigue document matches the measured baseline changes."
+        }
+      ],
+      "method": "rules-only",
+      "causes": {
+        "fatigue-related-stress": {
+          "label": "Fatigue-Related Stress",
+          "pattern": {
+            "EDA": "slight ↑",
+            "SCR": "slight ↑",
+            "HR": "slight ↑",
+            "RMSSD": "↓↓↓",
+            "SDNN": "abnormal"
+          }
+        }
+      }
+    },
+    "posture": {
+      "enabled": true,
+      "defaultLevel": "good",
+      "requiredSignals": [
+        "absPitch",
+        "absRoll"
+      ],
+      "minEvidence": 2,
+      "rules": [
+        {
+          "cause": "chest-tilt",
+          "level": "critical",
+          "severity": 3,
+          "score": 0.7,
+          "match": "any",
+          "minEvidence": 2,
+          "conditions": [
+            {
+              "signal": "absPitch",
+              "operator": ">",
+              "value": 45
+            },
+            {
+              "signal": "absRoll",
+              "operator": ">",
+              "value": 20
+            }
+          ],
+          "explanation": "Calibrated chest tilt exceeds the pitch or roll threshold; twisting and task cause cannot be inferred."
+        },
+        {
+          "cause": "chest-tilt",
+          "level": "poor",
+          "severity": 2,
+          "score": 0.45,
+          "match": "any",
+          "minEvidence": 2,
+          "conditions": [
+            {
+              "signal": "absPitch",
+              "operator": ">",
+              "value": 20
+            },
+            {
+              "signal": "absRoll",
+              "operator": ">",
+              "value": 10
+            }
+          ],
+          "explanation": "Calibrated chest tilt exceeds the pitch or roll threshold; twisting and task cause cannot be inferred."
+        }
+      ]
+    },
+    "stress": {
+      "enabled": false,
+      "defaultLevel": "unavailable",
+      "requiredSignals": [],
+      "minEvidence": 1,
+      "rules": []
+    }
+  },
+  "source": "DBR masterfile. Fatigue: section 6 Fatigue-Related Stress thresholds. Frustration: cause arrows from the frustration sheet, converted to % thresholds using the stress-sheet rows with the same arrow pattern (Cognitive Overload, Time Pressure, Fatigue-Related caps). See docs/TEAM3_FRUSTRATION_FATIGUE.md."
+}
