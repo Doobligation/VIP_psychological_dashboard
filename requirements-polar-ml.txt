@@ -1,2 +1,5 @@
 numpy>=1.24,<3
 scikit-learn>=1.4,<2
+pandas>=2,<4
+# Optional: adds XGBoost to the frustration model comparison.
+xgboost>=2,<4

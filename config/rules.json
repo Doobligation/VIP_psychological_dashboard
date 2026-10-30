@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "team3-frustration-fatigue-2026-10-29",
+  "version": "team3-frustration-fatigue-2026-10-29-ml",
   "scoreSemantics": "Heuristic rule severity score; not a calibrated physiological probability.",
   "riskLevels": [
     "low",
@@ -44,7 +44,7 @@
   "states": {
     "frustration": {
       "enabled": true,
-      "method": "rules-only",
+      "method": "ml-level-with-rule-causes",
       "defaultLevel": "low",
       "requiredSignals": [
         "edaChangePct",
@@ -104,6 +104,10 @@
             "RMSSD": "↓↓",
             "SDNN": "↓↓"
           }
+        },
+        "unspecified": {
+          "label": "Cause not identified",
+          "pattern": null
         }
       },
       "rules": [
@@ -692,7 +696,10 @@
           ],
           "explanation": "Low frustration: the Poor Communication / Unclear Instructions pattern in the DBR masterfile matches the measured baseline changes."
         }
-      ]
+      ],
+      "modelFile": "models/team3_frustration_seen_model.json",
+      "reportFile": "models/team3_frustration_seen_report.json",
+      "modelNote": "Team decision: deep XGBoost scored on participants seen in training. For workers not in the training data use models/team3_frustration_model.json (nested leave-one-participant-out)."
     },
     "fatigue": {
       "enabled": true,

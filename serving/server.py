@@ -24,7 +24,8 @@ from pipeline.feedback_pipeline import STATES
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / '.local' / 'closed_loop.sqlite3'
 MAX_JSON_BYTES = 1_000_000
-ROUTES = {'/samples', '/latest', '/decision', '/context', '/feedback', '/summary', '/export'}
+ROUTES = {'/samples', '/latest', '/decision', '/context', '/feedback', '/summary', '/export', '/history'}
+MAX_HISTORY = 2000
 
 
 def identifier(value, name):
@@ -70,7 +71,7 @@ class ClosedLoopService:
         session_id = identifier(payload.get('session_id'), 'session_id')
         participant = identifier(payload.get('participant'), 'participant')
         mode = payload.get('mode')
-        if mode not in ('live', 'demo'): raise ValueError('mode must be live or demo.')
+        if mode not in ('live', 'demo', 'batch'): raise ValueError('mode must be live, demo or batch.')
         return session_id, participant, mode
 
     def process_sample(self, sample):
@@ -85,7 +86,7 @@ class ClosedLoopService:
         if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not 0 <= timestamp <= 253402300799999:
             raise ValueError('timestamp_ms must be a finite nonnegative epoch timestamp.')
         # Reject impossible future evidence rather than leaving latest permanently fresh.
-        if mode == 'live' and timestamp > time.time()*1000 + self._fresh_ms():
+        if mode in ('live', 'batch') and timestamp > time.time()*1000 + self._fresh_ms():
             raise ValueError('timestamp_ms is in the future.')
         with self.lock:
             existing = self.store.reading(session_id, sample_id=sample['sample_id'])
@@ -108,6 +109,10 @@ class ClosedLoopService:
                             raise ValueError('snapshot must be an object.')
                         snapshot['fresh'] = False
                         snapshot['posture'] = {'level':'unavailable','reason':'Observation arrived stale.'}
+                        # Late live EDA/temperature must not feed the frustration model either.
+                        if isinstance(effective.get('raw'), dict):
+                            for key in ('eda_us', 'temp_c'):
+                                effective['raw'].pop(key, None)
                     result = self.pipeline.process(effective)
                     result['stale_on_arrival'] = stale_on_arrival
                     result['reading_id'] = uuid.uuid4().hex
@@ -139,7 +144,8 @@ class ClosedLoopService:
                         'states': {state: {'state':state,'available':False,'level':'unavailable','alert':None,'reason':'No observations.'} for state in STATES}, 'alerts': []}
             result = json.loads(row['result_json'])
             now = time.time()*1000
-            result['stale'] = now - min(row['received_ms'], row['timestamp_ms']) > self._fresh_ms()
+            # Batch results are historical by design (delayed uploads); only live/demo data goes stale.
+            result['stale'] = result.get('mode') != 'batch' and now - min(row['received_ms'], row['timestamp_ms']) > self._fresh_ms()
             if result['stale']:
                 result['alerts'] = []
                 features = result['features']
@@ -225,6 +231,32 @@ class ClosedLoopService:
             else: raise ValueError('kind must be rating, response or outcome.')
             self.store.save_feedback(record)
             return record
+
+    def history(self, session_id, limit=60):
+        """Compact decisions for the most recent readings; the full export is far larger."""
+        identifier(session_id, 'session_id')
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_HISTORY:
+            raise ValueError(f'limit must be an integer from 1 to {MAX_HISTORY}.')
+        keep = ('state', 'available', 'level', 'cause', 'causeLabel', 'reason', 'alternatives', 'streak',
+                'suppression', 'alert', 'wouldAlert')
+        with self.lock:
+            rows = self.store.recent(session_id, limit)
+        out = []
+        for row in rows:
+            result = json.loads(row['result_json'])
+            states = {}
+            for name, state in result.get('states', {}).items():
+                states[name] = {k: state.get(k) for k in keep}
+                model = state.get('model') or {}
+                if model:
+                    states[name]['model'] = {k: model.get(k) for k in ('status', 'family', 'probabilities', 'accuracy', 'accuracyScope', 'reason')}
+            features = result.get('features', {})
+            snapshot = features.get('snapshot') if isinstance(features.get('snapshot'), dict) else {}
+            compact = {k: v for k, v in features.items() if k.endswith('ChangePct')}
+            compact['snapshot'] = {k: snapshot.get(k) for k in ('hr', 'rmssd', 'sdnn', 'eda', 'scr', 'baseline')}
+            out.append(dict(reading_id=result.get('reading_id'), session_id=session_id, timestamp_ms=row['timestamp_ms'],
+                            mode=result.get('mode'), states=states, alerts=result.get('alerts', []), features=compact, stale=False))
+        return out
 
     def summary(self, session_id):
         identifier(session_id, 'session_id')
@@ -338,8 +370,13 @@ class FeedbackAPIMixin:
                 sessions = query.get('session_id', [])
                 if len(sessions) != 1: raise ValueError('Exactly one session_id is required.')
                 session_id = identifier(sessions[0], 'session_id')
-                handler = {'/latest':service.latest,'/decision':service.latest,'/context':service.context,'/summary':service.summary,'/export':service.export}[parsed.path]
-                result = handler(session_id)
+                if parsed.path == '/history':
+                    limits = query.get('limit', ['60'])
+                    if len(limits) != 1 or not limits[0].isdigit(): raise ValueError('limit must be a positive integer.')
+                    result = service.history(session_id, int(limits[0]))
+                else:
+                    handler = {'/latest':service.latest,'/decision':service.latest,'/context':service.context,'/summary':service.summary,'/export':service.export}[parsed.path]
+                    result = handler(session_id)
             self._feedback_json(result)
         except (ValueError, TypeError, KeyError, OverflowError, RecursionError, UnicodeDecodeError) as exc:
             self.close_connection = True

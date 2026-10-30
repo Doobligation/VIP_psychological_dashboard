@@ -29,10 +29,13 @@ BLEND_WEIGHT = .5
 DEFAULT_RULES = ROOT / 'config/rules.json'
 
 
-def atomic_json(path, value):
-    """Serialize before touching the destination, then replace on the same filesystem."""
+def atomic_json(path, value, indent=2):
+    """Serialize before touching the destination, then replace on the same filesystem.
+
+    indent=None writes compact JSON (large generated model files)."""
     path = Path(path)
-    encoded = json.dumps(value, indent=2, allow_nan=False) + '\n'
+    separators = None if indent else (',', ':')
+    encoded = json.dumps(value, indent=indent, separators=separators, allow_nan=False) + '\n'
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:

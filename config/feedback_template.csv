@@ -5,6 +5,7 @@ frustration,high,rework-repeated-task-failure,Pause and reassess the task. Work 
 frustration,high,schedule-pressure,Prioritize the next important step. Keep a consistent pace.,Reschedule lower-priority activities.,Reduce pressure and improve decision-making.,Time Pressure Literature,true
 frustration,high,equipment-tool-problems,Pause while the issue is addressed. Consider available alternatives.,Switch task or reassign equipment.,Reduce workflow disruption.,Occupational Stress Literature,true
 frustration,high,material-shortage-waiting-time,Review upcoming activities and organize tools and materials.,Assign preparatory work.,Maintain productivity.,Construction Operations Literature,true
+frustration,high,unspecified,Pause and reassess the task. Work through one step at a time.,Check in with the worker to identify the cause; simplify the task or provide guidance.,Restore task control.,Implementation choice: general DBR Level 3 guidance when the cause is not identified,true
 frustration,high,poor-communication-unclear-instructions,Verify the instructions before continuing.,Require task confirmation before execution.,Reduce execution errors.,Communication Research,true
 fatigue,low,any,,,,,false
 fatigue,medium,any,,,,,false

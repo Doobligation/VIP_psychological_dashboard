@@ -34,7 +34,8 @@ class DecisionEngine:
         for when, state_name in sorted(validated):
             self._state(state_name)['lastAlert'] = when
 
-    def update(self, result, timestamp_ms):
+    def update(self, result, timestamp_ms, deliver=True):
+        """deliver=False (late batch data): decide exactly as live, but record the cue as wouldAlert."""
         if not finite(timestamp_ms) or timestamp_ms < 0:
             raise ValueError('Decision timestamp must be finite and nonnegative.')
         required = self.settings['consecutiveHighPredictions']
@@ -73,10 +74,14 @@ class DecisionEngine:
         elif len(self.warnings) >= self.settings['maxWarnings']:
             out['suppression'] = 'warning-cap'
         else:
-            out['alert'] = dict(id=uuid.uuid4().hex, state=result['state'], cause=result['cause'],
-                                causeLabel=result.get('causeLabel'), level=result['level'],
-                                message=text['message'], action=text['action'], goal=text['goal'],
-                                reference=text.get('reference', ''), consecutive=state['count'], time=timestamp_ms)
+            alert = dict(id=uuid.uuid4().hex, state=result['state'], cause=result['cause'],
+                         causeLabel=result.get('causeLabel'), level=result['level'],
+                         message=text['message'], action=text['action'], goal=text['goal'],
+                         reference=text.get('reference', ''), consecutive=state['count'], time=timestamp_ms)
+            if deliver:
+                out['alert'] = alert
+            else:
+                out.update(suppression='retrospective', wouldAlert=alert)
             state.update(lastAlert=timestamp_ms, count=0)
             self.warnings.append(timestamp_ms)
         return out

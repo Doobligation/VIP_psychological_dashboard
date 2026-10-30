@@ -21,13 +21,14 @@ def validate_sample(sample):
         raise ValueError('A sample object is required.')
     for key in ('session_id', 'sample_id', 'participant'):
         identifier(sample.get(key), key)
-    if sample.get('mode') not in ('live', 'demo'):
-        raise ValueError('mode must be live or demo.')
+    # batch: real device data that arrives late (e.g. Empatica cloud uploads); never delivers cues.
+    if sample.get('mode') not in ('live', 'demo', 'batch'):
+        raise ValueError('mode must be live, demo or batch.')
     if not finite(sample.get('timestamp_ms')) or sample['timestamp_ms'] < 0:
         raise ValueError('timestamp_ms must be a finite nonnegative number.')
     if not isinstance(sample.get('snapshot'), dict) and not isinstance(sample.get('raw'), dict):
         raise ValueError('A snapshot or raw sensor object is required.')
-    numeric_fields = {'hr', 'heart_rate_bpm', 'rmssd', 'sdnn', 'eda', 'eda_us', 'edaChangePct', 'scr', 'scrChangePct', 'pitch', 'roll', 'rrCount', 'windowSeconds',
+    numeric_fields = {'hr', 'heart_rate_bpm', 'rmssd', 'sdnn', 'eda', 'eda_us', 'edaChangePct', 'scr', 'scrChangePct', 'temp_c', 'pitch', 'roll', 'rrCount', 'windowSeconds',
                       'requiredWindowSeconds', 'baselineProgress', 'recv_epoch_time_ms', 'hrChangePct',
                       'rmssdChangePct', 'sdnnChangePct', 'absPitch', 'absRoll', 'x', 'y', 'z'}
     def check(value, depth=0):

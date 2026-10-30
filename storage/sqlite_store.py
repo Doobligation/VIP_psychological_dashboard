@@ -87,6 +87,11 @@ class SQLiteStore:
                                       (session_id, value)).fetchone()
         return dict(row) if row else None
 
+    def recent(self, session_id, limit):
+        rows = self.connection.execute('SELECT * FROM readings WHERE session_id=? ORDER BY timestamp_ms DESC, sequence DESC LIMIT ?',
+                                       (session_id, limit)).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
     def latest(self, session_id):
         row = self.connection.execute('SELECT * FROM readings WHERE session_id=? ORDER BY timestamp_ms DESC, sequence DESC LIMIT 1',
                                       (session_id,)).fetchone()

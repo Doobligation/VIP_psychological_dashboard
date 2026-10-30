@@ -2,3 +2,4 @@
 # Install these extras for ML training and XLSX table/recording imports.
 -r requirements-polar.txt
 -r requirements-polar-ml.txt
+-r requirements-empatica.txt

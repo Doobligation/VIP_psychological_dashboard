@@ -9,6 +9,18 @@ resting baseline (EDA, SCR, HR, RMSSD, SDNN) using the DBR masterfile rules. **O
 risk gives feedback, and only after 3 consecutive High predictions**; a Low or Medium
 prediction resets the count. Thresholds and messages live in `config/`, not in code.
 
+When EDA and skin temperature are streamed, an XGBoost model sets the frustration level and
+the DBR rules name the cause. The deployed model scores **87.5% on a random window split**
+(participants seen in training) and 48.9% on new people. A cautious Extra-Trees model, 58.1% on
+new people (nested leave-one-participant-out), can be selected in `config/rules.json`.
+Retrain with `python3 training/train_frustration_model.py [--profile unseen]` (labelled sessions in
+`.local/data/Frustration`, never committed). Evaluation reports are in `models/` and on the dashboard.
+
+Empatica EmbracePlus data arrives through AWS S3 in 30-minute files, so it is delayed. Run
+`python3 tools/empatica_bridge.py --url http://127.0.0.1:8000 --participant <enrollment> --since <UTC start> --session-id <name> --poll 60`
+to feed it in; its predictions are logged, and cues that would have fired are recorded but not sent. Then open
+`/serving/dashboard.html?session=<name>`. Details are in the Team 3 guide.
+
 ```bash
 python3 serve_dashboard.py
 # open http://127.0.0.1:8000/serving/dashboard.html and click "Run scripted demo"
