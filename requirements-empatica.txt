@@ -1,0 +1,4 @@
+# Empatica EmbracePlus data from the study S3 bucket (tools/empatica_bridge.py).
+boto3>=1.28,<2
+fastavro>=1.8,<2
+python-dotenv>=1,<2

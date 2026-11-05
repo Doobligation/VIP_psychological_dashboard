@@ -1,0 +1,2 @@
+# Optional: only XLSX recording input needs this dependency. CSV is stdlib-only.
+openpyxl>=3.1,<4

@@ -1,0 +1,113 @@
+{
+  "profile": "seen-participants",
+  "generatedAt": "2026-10-29T16:18:17+00:00",
+  "data": {
+    "source": "labelled-sessions",
+    "participants": 15,
+    "sessions": 27,
+    "windows": 795,
+    "classWindows": {
+      "low": 362,
+      "medium": 262,
+      "high": 171
+    },
+    "trainedAt": "2026-10-29T16:18:17+00:00",
+    "folder": "Frustration"
+  },
+  "selectedModel": {
+    "family": "xgboost",
+    "params": {
+      "max_depth": 6,
+      "n_estimators": 500,
+      "learning_rate": 0.1,
+      "subsample": 1.0,
+      "colsample_bytree": 1.0,
+      "reg_lambda": 1.0
+    },
+    "exportCheckMaxGap": 5.846131353459683e-07
+  },
+  "headline": {
+    "accuracy": 0.8755,
+    "scope": "seen participants",
+    "method": "random window split (5-fold)"
+  },
+  "evaluations": [
+    {
+      "name": "Random window split (5-fold)",
+      "accuracy": 0.8755,
+      "scope": "seen participants",
+      "meaning": "Headline. Test windows come from people and sessions in the training data."
+    },
+    {
+      "name": "Training data itself",
+      "accuracy": 1.0,
+      "scope": "seen participants",
+      "meaning": "Memorization ceiling."
+    },
+    {
+      "name": "Later part of each session",
+      "accuracy": 0.6885,
+      "scope": "seen participants",
+      "meaning": "Train on the first 70% of every session, test on the end without overlap."
+    },
+    {
+      "name": "Same person's other session",
+      "accuracy": 0.573,
+      "scope": "seen participants",
+      "meaning": "A new session from someone in the training data."
+    },
+    {
+      "name": "New people (leave one participant out)",
+      "accuracy": 0.4893,
+      "scope": "unseen participants",
+      "meaning": "Expected accuracy for workers not in the training data."
+    },
+    {
+      "name": "Fake labels, random split (control)",
+      "accuracy": 0.8603,
+      "scope": "seen participants",
+      "range": [
+        0.8277,
+        0.9006
+      ],
+      "meaning": "Each participant given a random label; a high score here is person recognition, not frustration."
+    }
+  ],
+  "randomSplitDetail": {
+    "windowAccuracy": 0.8755,
+    "sessionWeightedAccuracy": 0.8337,
+    "macroF1": 0.8718,
+    "sessionVoteAccuracy": 0.8889,
+    "recall": {
+      "low": 0.8785,
+      "medium": 0.8931,
+      "high": 0.8421
+    },
+    "confusion": {
+      "rows": "true",
+      "columns": "predicted",
+      "labels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "matrix": [
+        [
+          318,
+          30,
+          14
+        ],
+        [
+          22,
+          234,
+          6
+        ],
+        [
+          12,
+          15,
+          144
+        ]
+      ]
+    }
+  }
+}

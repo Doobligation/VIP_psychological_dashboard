@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Frustration &amp; Fatigue Risk</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ef;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d68;
+    --hairline: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,.10);
+    --accent: #2a78d6; --on-accent: #ffffff;
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b; --none: #e1e0d9;
+    --on-good: #ffffff; --on-warning: #0b0b0b; --on-critical: #ffffff; --on-none: #52514e;
+    --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #a3a29c;
+      --hairline: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+      --accent: #3987e5; --none: #383835; --on-none: #c3c2b7;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #a3a29c;
+    --hairline: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+    --accent: #3987e5; --none: #383835; --on-none: #c3c2b7;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 var(--font); }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 24px; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  h3 { font-size: 14px; margin: 0; }
+  p { margin: 0; }
+  a { color: var(--accent); }
+  .small { font-size: 13px; color: var(--ink-2); }
+  .muted { color: var(--muted); }
+  .card { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 16px; min-width: 0; }
+  .stack > * + * { margin-top: 12px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 6px; }
+  .badge { font-size: 12px; font-weight: 600; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--ring); color: var(--ink-2); background: var(--surface-2); }
+  .lede { color: var(--ink-2); max-width: 820px; margin-bottom: 16px; }
+  .lede strong { color: var(--ink); }
+
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+  button, select, input[type=number] { font: inherit; font-size: 14px; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--axis); border-radius: 8px; padding: 7px 12px; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--surface-2); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sep { width: 1px; height: 24px; background: var(--hairline); margin: 0 4px; }
+  label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--ink-2); }
+
+  .phase { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 10px 14px;
+    border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 8px 8px 0; margin-bottom: 16px; }
+  .phase strong { font-size: 15px; }
+  .error { border-left-color: var(--critical); }
+
+  .grid-inputs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+  .tile .label { font-size: 13px; color: var(--ink-2); display: flex; justify-content: space-between; gap: 6px; }
+  .tile .value { font-size: 26px; font-weight: 600; margin: 4px 0 2px; }
+  .tile .sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .grid-states { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+  .state-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; letter-spacing: .02em;
+    padding: 4px 12px; border-radius: 999px; background: var(--none); color: var(--on-none); }
+  .pill[data-level=low] { background: var(--good); color: var(--on-good); }
+  .pill[data-level=medium] { background: var(--warning); color: var(--on-warning); }
+  .pill[data-level=high] { background: var(--critical); color: var(--on-critical); }
+  .cause { font-size: 15px; font-weight: 600; }
+  .streak { display: flex; align-items: center; gap: 10px; }
+  .dots { display: inline-flex; gap: 6px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--axis); }
+  .dot.on { background: var(--critical); border-color: var(--critical); }
+  .decision { padding: 8px 10px; border-radius: 8px; background: var(--surface-2); font-size: 14px; }
+  .decision[data-kind=alert] { background: var(--critical); color: var(--on-critical); font-weight: 600; }
+  .note { font-size: 13px; color: var(--ink-2); min-height: 1.5em; }
+
+  .timeline-card { margin-top: 16px; container-type: inline-size; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .tl-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 8px; }
+  .tl-row + .tl-row { margin-top: 2px; }
+  .tl-name { font-size: 13px; color: var(--ink-2); }
+  .tl-cells { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; min-height: 26px; }
+  .cell { height: 26px; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; background: var(--none); color: var(--on-none); cursor: default; }
+  .cell[data-level=low] { background: var(--good); color: var(--on-good); }
+  .cell[data-level=medium] { background: var(--warning); color: var(--on-warning); }
+  .cell[data-level=high] { background: var(--critical); color: var(--on-critical); }
+  .cell.empty { background: transparent; border: 1px dashed var(--hairline); }
+  .cell:hover, .cell:focus-visible { filter: brightness(1.12); outline: 2px solid var(--ink); outline-offset: 0; }
+  .marks { height: 16px; }
+  .mark { height: 16px; display: flex; align-items: flex-end; justify-content: center; font-size: 11px; color: var(--ink); }
+  .tl-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin: 6px 0 0 100px; }
+  @container (max-width: 640px) { .cell { font-size: 0; } .tl-row { grid-template-columns: 70px minmax(0, 1fr); } .tl-axis { margin-left: 78px; } }
+  #tooltip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface); color: var(--ink);
+    border: 1px solid var(--ring); box-shadow: 0 6px 20px rgba(0,0,0,.18); border-radius: 8px; padding: 8px 10px;
+    font-size: 12px; max-width: 280px; display: none; }
+  #tooltip strong { display: block; font-size: 14px; }
+
+  .grid-bottom { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; margin-top: 16px; }
+  .feedback-msg { font-size: 20px; font-weight: 600; line-height: 1.35; }
+  dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 14px; }
+  dl.kv dt { color: var(--ink-2); }
+  dl.kv dd { margin: 0; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  ol.alerts { margin: 0; padding-left: 20px; font-size: 13px; color: var(--ink-2); }
+  ol.alerts li + li { margin-top: 4px; }
+  .manual-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+  .manual-grid label { font-size: 12px; color: var(--ink-2); display: grid; gap: 2px; }
+  .manual-grid input { width: 100%; }
+
+  details { margin-top: 16px; }
+  #ml-report { overflow-wrap: anywhere; }
+  label.inline { max-width: 100%; min-width: 0; }
+  #session-picker { min-width: 0; max-width: 100%; width: 300px; }
+  details > summary { cursor: pointer; font-weight: 600; padding: 10px 0; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  th { color: var(--ink-2); font-weight: 600; }
+  td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  footer { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--ink-2); }
+
+  @media (max-width: 900px) {
+    .grid-inputs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-bottom { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .grid-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-states { grid-template-columns: minmax(0, 1fr); }
+    .manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sep { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Frustration &amp; Fatigue Risk</h1>
+    <span class="badge" id="mode-badge">LOADING</span>
+    <span class="small" id="session-label"></span>
+  </header>
+  <p class="lede">Team 3 prediction and feedback system. Each prediction compares EDA, SCR, HR, RMSSD and SDNN with the wearer's own baseline
+    and classifies <strong>Low, Medium or High</strong> risk using the DBR masterfile rules. <strong>Only High risk gives feedback</strong>,
+    and only after <strong><span id="required-lede">3</span> consecutive High predictions</strong>; a Low or Medium prediction resets the count.</p>
+
+  <div class="controls" role="group" aria-label="Demo controls">
+    <button class="primary" id="run" type="button" disabled>Run scripted demo</button>
+    <button id="pause" type="button" disabled>Pause</button>
+    <button id="step" type="button" disabled>Next prediction</button>
+    <button id="reset" type="button" disabled>New session</button>
+    <label class="inline">Pace <select id="speed">
+      <option value="2000">1 prediction / 2 s</option>
+      <option value="1000" selected>1 prediction / s</option>
+      <option value="500">2 predictions / s</option>
+    </select></label>
+    <span class="sep" aria-hidden="true"></span>
+    <label class="inline"><input type="checkbox" id="speak"> Speak feedback</label>
+    <span class="sep" aria-hidden="true"></span>
+    <label class="inline">Session <select id="session-picker" aria-label="Saved session to follow"><option value="">Choose a saved session…</option></select></label>
+    <button id="follow" type="button">Follow session</button>
+  </div>
+  <div class="phase" id="phase" role="status" aria-live="polite"><strong id="phase-title">Loading configuration…</strong><span class="small" id="phase-note"></span></div>
+
+  <section aria-label="Inputs: change from the wearer's baseline">
+    <h2>Inputs · change from the wearer's baseline</h2>
+    <div class="grid-inputs" id="inputs"></div>
+  </section>
+
+  <section class="grid-states" aria-label="Predictions">
+    <article class="card stack" id="card-frustration"></article>
+    <article class="card stack" id="card-fatigue"></article>
+  </section>
+
+  <section class="card timeline-card" aria-label="Prediction timeline">
+    <h2>Prediction timeline · one cell per prediction, newest on the right</h2>
+    <div class="legend" aria-hidden="true">
+      <span><i class="swatch" style="background:var(--good)"></i>L · Low</span>
+      <span><i class="swatch" style="background:var(--warning)"></i>M · Medium</span>
+      <span><i class="swatch" style="background:var(--critical)"></i>H · High</span>
+      <span><i class="swatch" style="background:var(--none)"></i>– · Unavailable</span>
+      <span>◆ Feedback issued</span>
+      <span>◇ Would have fired (late batch data)</span>
+    </div>
+    <div id="timeline"></div>
+    <div class="tl-axis" id="tl-axis"><span></span><span></span></div>
+  </section>
+
+  <section class="grid-bottom">
+    <article class="card stack" aria-label="Feedback">
+      <h2>Latest feedback</h2>
+      <p class="small" id="fb-meta">No feedback yet. Low and Medium risk never give feedback.</p>
+      <p class="feedback-msg" id="fb-message" role="status" aria-live="assertive"></p>
+      <dl class="kv" id="fb-details" hidden>
+        <dt>Task action</dt><dd id="fb-action"></dd>
+        <dt>Goal</dt><dd id="fb-goal"></dd>
+        <dt>Reference</dt><dd id="fb-reference"></dd>
+      </dl>
+      <div class="btn-row" role="group" aria-label="Worker response">
+        <span class="small">Worker response:</span>
+        <button type="button" data-kind="response" data-value="acknowledged" disabled>Acknowledge</button>
+        <button type="button" data-kind="response" data-value="break-taken" disabled>I took a break</button>
+        <button type="button" data-kind="response" data-value="not-helpful" disabled>Not helpful</button>
+      </div>
+      <div class="btn-row" role="group" aria-label="Outcome">
+        <span class="small">Afterwards I feel:</span>
+        <button type="button" data-kind="outcome" data-value="better" disabled>Better</button>
+        <button type="button" data-kind="outcome" data-value="same" disabled>The same</button>
+        <button type="button" data-kind="outcome" data-value="worse" disabled>Worse</button>
+      </div>
+      <p class="small" id="fb-status" role="status"></p>
+      <div><h3 id="alert-heading">Feedback this session</h3><ol class="alerts" id="alert-list"></ol></div>
+    </article>
+
+    <article class="card stack" aria-label="Manual input">
+      <h2>Try your own values</h2>
+      <p class="small">Enter % change from baseline and send predictions into the same session.</p>
+      <div class="btn-row" id="presets"></div>
+      <div class="manual-grid" id="manual"></div>
+      <div class="btn-row">
+        <button type="button" id="send-one" disabled>Send 1 prediction</button>
+        <button type="button" id="send-three" disabled>Send 3 in a row</button>
+      </div>
+    </article>
+  </section>
+
+  <details>
+    <summary>Prediction log (table view)</summary>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>Phase</th><th>EDA %</th><th>SCR %</th><th>HR %</th><th>RMSSD %</th><th>SDNN %</th>
+        <th>Frustration</th><th>Fatigue</th><th>Feedback</th></tr></thead>
+      <tbody id="log"></tbody></table></div>
+  </details>
+  <details id="ml-details">
+    <summary>Frustration ML model · accuracy</summary>
+    <div class="stack" id="ml-report"><p class="small">Loading the evaluation report…</p></div>
+  </details>
+  <details>
+    <summary>Decision rules (from config/rules.json)</summary>
+    <p class="small">Thresholds are % change from the wearer's baseline. Every condition in a row must hold; the highest level wins.
+      When several causes match at the same level, the most specific (strictest) pattern is reported and the others are listed.
+      When none matches exactly but at least 4 of the 5 signals agree with a cause, it is shown as the closest pattern, labelled as a partial match.
+      Frustration arrows come from the DBR frustration sheet; numbers come from the stress-sheet rows with the same arrow pattern.</p>
+    <div class="table-wrap" id="rules-tables"></div>
+  </details>
+  <details>
+    <summary>Feedback table (from config/feedback_table.json)</summary>
+    <div class="table-wrap" id="feedback-table"></div>
+  </details>
+
+  <footer>
+    <span id="summary">No session yet.</span>
+    <a id="export" hidden>Download session JSON</a>
+    <a href="/psychosocial_dashboard.html">Polar H10 platform dashboard</a>
+  </footer>
+</main>
+<div id="tooltip" role="tooltip"></div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const STATES = [['frustration', 'Frustration'], ['fatigue', 'Fatigue']];
+const LEVELS = {
+  low: { label: 'Low', letter: 'L', icon: '●' }, medium: { label: 'Medium', letter: 'M', icon: '◆' },
+  high: { label: 'High', letter: 'H', icon: '▲' }, unavailable: { label: 'Unavailable', letter: '–', icon: '—' },
+};
+const SIGNALS = [
+  { key: 'eda', name: 'EDA', unit: 'µS', digits: 2 }, { key: 'scr', name: 'SCR', unit: '/min', digits: 1 },
+  { key: 'hr', name: 'HR', unit: 'bpm', digits: 0 }, { key: 'rmssd', name: 'RMSSD', unit: 'ms', digits: 0 },
+  { key: 'sdnn', name: 'SDNN', unit: 'ms', digits: 0 },
+];
+const PRESET_NAMES = { rest: 'Rest', frustrationMedium: 'Medium frustration', frustrationHigh: 'High frustration',
+  fatigueMedium: 'Medium fatigue', fatigueHigh: 'High fatigue' };
+const TIMELINE_CELLS = 40;
+
+let config = null, steps = [], stepIndex = 0, session = null, counter = 0, clock = 0;
+let running = false, busy = false, speed = 1000, following = null, followTimer = null;
+let history = [], alerts = [], lastAlert = null, lastStreak = {}, latestResult = null, latestNotes = {};
+
+const pct = v => Number.isFinite(v) ? `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}%` : '—';
+const fmt = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '—';
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const levelOf = d => d && d.available ? d.level : 'unavailable';
+const required = () => config.feedback.decision.consecutiveHighPredictions;
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'dataset') Object.assign(node.dataset, v); else if (k in node) node[k] = v; else node.setAttribute(k, v);
+  }
+  for (const child of children) if (child !== null && child !== undefined) node.append(child);
+  return node;
+}
+
+async function loadConfig() {
+  const files = ['rules.json', 'feedback_table.json', 'demo_scenario.json'];
+  const [rules, feedback, scenario] = await Promise.all(files.map(async file => {
+    const response = await fetch(`/config/${file}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`${file} unavailable (HTTP ${response.status})`);
+    return response.json();
+  }));
+  config = { rules, feedback, scenario };
+  steps = scenario.phases.flatMap((phase, index) =>
+    phase.steps.map(name => ({ phase, phaseIndex: index, name, changes: scenario.patterns[name] })));
+}
+
+function newSession() {
+  stopFollowing();
+  running = false;
+  session = { session_id: `team3-demo-${crypto.randomUUID()}`, participant: 'team3-demo', mode: 'demo' };
+  counter = 0; clock = Date.now(); stepIndex = 0;
+  history = []; alerts = []; lastAlert = null; lastStreak = {}; latestResult = null; latestNotes = {};
+  setPhase('Ready', `Scripted demo: ${steps.length} predictions in ${config.scenario.phases.length} phases. Values are synthetic.`);
+  $('fb-status').textContent = '';
+  render();
+}
+
+function snapshotFor(changes) {
+  const baseline = config.scenario.baseline, policy = config.rules.featurePolicy;
+  const current = Object.fromEntries(Object.entries(baseline).map(([k, v]) => [k, v * (1 + changes[k] / 100)]));
+  return { ...current, edaFresh: true, baseline: { ...baseline }, baselineState: 'ready', fresh: true,
+    rrCount: Math.max(60, policy.minRr), windowSeconds: policy.windowSeconds, requiredWindowSeconds: policy.windowSeconds,
+    featurePolicy: { ...policy }, postureCalibrated: true, posture: { level: 'good', pitch: 0, roll: 0 } };
+}
+
+async function send(changes, phaseTitle) {
+  // Demo predictions are one simulated second apart, so pausing never breaks a consecutive run.
+  clock += 1000;
+  const sample = { ...session, sample_id: `${session.session_id}-${++counter}`, timestamp_ms: clock,
+    snapshot: snapshotFor(changes), raw: { source: 'team3-dashboard', phase: phaseTitle } };
+  const response = await fetch('/samples', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sample) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+  ingest(result, phaseTitle);
+}
+
+async function guarded(task) {
+  if (busy) return;
+  busy = true; renderControls();
+  try { await task(); }
+  catch (error) { running = false; setPhase('Request failed', `${error.message}. Is the local server running?`, true); }
+  finally { busy = false; renderControls(); }
+}
+
+async function stepOnce() {
+  if (stepIndex >= steps.length) return;
+  const { phase, phaseIndex, changes } = steps[stepIndex];
+  setPhase(`Phase ${phaseIndex + 1} of ${config.scenario.phases.length} · ${phase.title}`, phase.note);
+  await send(changes, phase.title);
+  stepIndex++;
+  if (stepIndex >= steps.length) setPhase('Scripted demo complete', 'Use “Try your own values”, or start a new session to replay.');
+}
+
+async function run() {
+  if (stepIndex >= steps.length) newSession();
+  running = true; renderControls();
+  while (running && stepIndex < steps.length) {
+    await guarded(stepOnce);
+    if (running && stepIndex < steps.length) await sleep(speed);
+  }
+  running = false; renderControls();
+}
+
+// A wearable session reads every second but predicts less often; only predictions get a timeline cell.
+const isPrediction = result => result.states?.frustration?.prediction !== false;
+
+function ingest(result, phaseTitle, { speak = true, draw = true } = {}) {
+  const notes = {};
+  const predicted = isPrediction(result);
+  latestResult = result;
+  for (const [key] of STATES) {
+    const d = result.states[key] || {};
+    const before = lastStreak[key] || 0;
+    const cue = d.alert || d.wouldAlert;
+    if (before > 0 && !cue && (d.streak?.count ?? 0) === 0 && d.suppression !== 'duplicate-or-reversed-timestamp')
+      notes[key] = `Count reset from ${before} to 0 by a ${LEVELS[levelOf(d)].label} prediction.`;
+    lastStreak[key] = cue ? 0 : d.streak?.count ?? 0;
+    // Late batch data records the cue live data would have given; it is listed but never spoken.
+    if (d.wouldAlert) alerts.unshift({ ...d.wouldAlert, delivered: false });
+  }
+  if (predicted) {
+    latestNotes = notes;
+    history.push({ n: (history.at(-1)?.n ?? 0) + 1, phase: phaseTitle, result, notes });
+    if (history.length > 1000) history.shift();
+  }
+  for (const alert of result.alerts || []) {
+    alerts.unshift(alert); lastAlert = alert;
+    // Earlier readings loaded when following a session are shown, never spoken again.
+    if (speak && $('speak').checked && globalThis.speechSynthesis && globalThis.SpeechSynthesisUtterance) {
+      globalThis.speechSynthesis.cancel();
+      const prefix = result.mode === 'demo' ? 'Demonstration. ' : '';
+      globalThis.speechSynthesis.speak(new SpeechSynthesisUtterance(prefix + alert.message));
+    }
+  }
+  if (!draw) return;
+  render();
+  void refreshSummary();
+}
+
+function decisionText(d, key) {
+  const n = required();
+  if (!d || !d.available) {
+    return { kind: 'none', text: `${d?.reason || 'No prediction yet.'} Missing signals are never treated as normal.` };
+  }
+  if (d.alert) return { kind: 'alert', text: `Feedback issued after ${d.alert.consecutive} consecutive High predictions.` };
+  const count = d.streak?.count ?? 0;
+  switch (d.suppression) {
+    case 'no-feedback-for-level':
+      return { kind: 'quiet', text: d.level === 'medium' ? 'Medium risk: no feedback (by design).' : 'Low risk: no feedback.' };
+    case 'awaiting-consecutive-high': {
+      const left = n - count;
+      return { kind: 'wait', text: `High prediction ${count} of ${n}: feedback after ${left} more consecutive High prediction${left === 1 ? '' : 's'}.` };
+    }
+    case 'cooldown':
+      return { kind: 'wait', text: `High ×${count}. ${key[0].toUpperCase() + key.slice(1)} feedback was already given in the last ${config.feedback.decision.cooldownSeconds} s (cooldown).` };
+    case 'warning-cap':
+      return { kind: 'wait', text: `High ×${count}. Warning limit reached (${config.feedback.decision.maxWarnings} per ${config.feedback.decision.warningWindowSeconds / 60} min).` };
+    case 'same-cue-repeat':
+      return { kind: 'wait', text: `High ×${count}. This cue was already given in the last ${(config.feedback.decision.sameCueRepeatSeconds || 0) / 60} min, so it is not repeated.` };
+    case 'no-feedback-for-cause':
+      return { kind: 'quiet', text: `High ×${count}. No feedback is configured for this cause.` };
+    case 'duplicate-or-reversed-timestamp': return { kind: 'quiet', text: 'Duplicate reading ignored.' };
+    case 'retrospective':
+      return { kind: 'wait', text: `Feedback would have been issued here after ${d.wouldAlert?.consecutive ?? n} consecutive High predictions, but the data arrived late, so no cue was sent.` };
+    default: return { kind: 'quiet', text: d.suppression || 'Waiting.' };
+  }
+}
+
+function renderInputs(result) {
+  const features = result?.features || {}, snapshot = features.snapshot || {}, baseline = snapshot.baseline || {};
+  $('inputs').replaceChildren(...SIGNALS.map(s => {
+    const change = features[`${s.key}ChangePct`];
+    const measured = Number.isFinite(snapshot[s.key]);
+    const beats = Number.isFinite(snapshot.cleanBeatFraction) ? `${Math.round(snapshot.cleanBeatFraction * 100)}% of beats clean` : '';
+    const hrv = s.key === 'rmssd' || s.key === 'sdnn';
+    const why = snapshot.worn === false ? 'Device not worn'
+      : (s.key === 'eda' || s.key === 'scr') && snapshot.edaBelowFloor ? 'EDA below the 0.05 µS validity floor'
+      : hrv && snapshot.hrvUsable === false ? `Too few clean beats (${beats || 'none'})`
+      : result ? 'Not measured in this reading' : 'Waiting for a prediction';
+    return el('div', { className: 'card tile' },
+      el('div', { className: 'label' }, el('span', { textContent: s.name }), el('span', { className: 'muted', textContent: s.unit })),
+      el('div', { className: 'value', textContent: pct(change) }),
+      el('div', { className: 'sub', textContent: measured
+        ? `${fmt(snapshot[s.key], s.digits)} now · ${fmt(baseline[s.key], s.digits)} baseline${hrv && beats ? ` · ${beats}` : ''}`
+        : why }));
+  }));
+}
+
+function renderState(key, title, result, notes) {
+  const d = result?.states?.[key];
+  const level = result ? levelOf(d) : null;
+  const info = LEVELS[level || 'unavailable'];
+  const count = d?.streak?.level ? d.streak.count : 0;
+  const n = required();
+  const decision = result ? decisionText(d, key) : { kind: 'quiet', text: 'Waiting for the first prediction.' };
+  // DBR Level 1 is "any cause", so a cause is reported only for Medium and High.
+  const closest = d?.causeMatch === 'closest' && d.causeAgreement;
+  const named = d?.available && d.level !== 'low' && d.causeLabel && d.cause !== 'unspecified';
+  const cause = named
+    ? el('p', {}, el('span', { className: 'small', textContent: closest ? 'Closest pattern: ' : 'Likely cause: ' }),
+        el('span', { className: 'cause', textContent: d.causeLabel }),
+        closest ? el('span', { className: 'small', textContent: ` (${closest.agreeing} of ${closest.total} signals agree)` }) : null)
+    : d?.available && d.level !== 'low' && d.causeLabel
+      // The ML reason says whether signals were missing or measured without matching any pattern.
+      ? el('p', { className: 'small', textContent: `Cause not identified. ${d.reason.replace(/^ML model predicts[^.]*\.\s*/, '')}` })
+      : el('p', { className: 'small', textContent: d?.available ? 'Below the Medium thresholds. Low risk applies to any cause, so none is reported.' : '' });
+  const alternatives = d?.alternatives?.length
+    ? el('p', { className: 'small', textContent: `Also consistent with: ${d.alternatives.join(', ')}` }) : null;
+  const m = d?.model;
+  const ml = key !== 'frustration' || !m ? null : m.status === 'ml'
+    ? el('p', { className: 'small', textContent: `ML (${m.family}): ${['low', 'medium', 'high'].map(c => `${LEVELS[c].label} ${Math.round(m.probabilities[c] * 100)}%`).join(' · ')}`
+        + (Number.isFinite(m.accuracy) ? ` · about ${Math.round(m.accuracy * 100)}% accurate on ${m.accuracyScope}` : '') })
+    : el('p', { className: 'small muted', textContent: `ML: ${m.reason}` });
+  const dots = el('span', { className: 'dots', 'aria-hidden': 'true' },
+    ...Array.from({ length: n }, (_, i) => el('i', { className: `dot${i < Math.min(count, n) ? ' on' : ''}` })));
+  $(`card-${key}`).replaceChildren(...[
+    el('div', { className: 'state-head' }, el('h2', { textContent: title, style: 'margin:0' }),
+      el('span', { className: 'pill', dataset: { level: level || 'unavailable' },
+        textContent: level ? `${info.icon} ${info.label.toUpperCase()}` : '—' })),
+    cause, alternatives, ml,
+    el('div', { className: 'streak' }, dots,
+      el('span', { className: 'small', textContent: count > n ? `High ×${count} in a row` : `${count} of ${n} consecutive High predictions` })),
+    el('div', { className: 'decision', dataset: { kind: decision.kind }, textContent: decision.text }),
+    el('p', { className: 'note', textContent: notes?.[key] || '' })].filter(Boolean));
+}
+
+const tooltip = $('tooltip');
+function showTooltip(event, lines) {
+  tooltip.replaceChildren(el('strong', { textContent: lines[0] }), ...lines.slice(1).map(line => el('div', { textContent: line })));
+  tooltip.style.display = 'block';
+  const rect = event.target.getBoundingClientRect();
+  const x = Math.min(window.innerWidth - tooltip.offsetWidth - 8, Math.max(8, rect.left + rect.width / 2 - tooltip.offsetWidth / 2));
+  const y = rect.top - tooltip.offsetHeight - 8 < 8 ? rect.bottom + 8 : rect.top - tooltip.offsetHeight - 8;
+  tooltip.style.left = `${x}px`; tooltip.style.top = `${y}px`;
+}
+const hideTooltip = () => { tooltip.style.display = 'none'; };
+
+function renderTimeline() {
+  const shown = history.slice(-TIMELINE_CELLS);
+  const pad = TIMELINE_CELLS - shown.length;
+  const rows = [];
+  for (const [key, title] of STATES) {
+    const marks = el('div', { className: 'tl-cells marks', 'aria-hidden': 'true' });
+    const cells = el('div', { className: 'tl-cells', role: 'list', 'aria-label': `${title} predictions` });
+    for (let i = 0; i < pad; i++) { marks.append(el('span')); cells.append(el('span', { className: 'cell empty' })); }
+    for (const entry of shown) {
+      const d = entry.result.states[key];
+      const level = levelOf(d);
+      const decision = decisionText(d, key).text;
+      const lines = [`#${entry.n} · ${title} ${LEVELS[level].label}`,
+        ...(d?.causeLabel && level !== 'low' ? [d.causeLabel] : []), entry.phase, decision];
+      marks.append(el('span', { className: 'mark', textContent: d?.alert ? '◆' : d?.wouldAlert ? '◇' : '' }));
+      const cell = el('span', { className: 'cell', role: 'listitem', tabIndex: 0, dataset: { level },
+        textContent: LEVELS[level].letter, 'aria-label': lines.join('. ') });
+      for (const type of ['pointerenter', 'focus']) cell.addEventListener(type, e => showTooltip(e, lines));
+      for (const type of ['pointerleave', 'blur']) cell.addEventListener(type, hideTooltip);
+      cells.append(cell);
+    }
+    rows.push(el('div', { className: 'tl-row' }, el('span'), marks),
+      el('div', { className: 'tl-row' }, el('span', { className: 'tl-name', textContent: title }), cells));
+  }
+  $('timeline').replaceChildren(...rows);
+  const first = shown[0]?.n, last = shown.at(-1)?.n;
+  $('tl-axis').replaceChildren(el('span', { textContent: first ? `#${first}` : '' }), el('span', { textContent: last ? `#${last} (latest)` : '' }));
+}
+
+function renderFeedback() {
+  const a = lastAlert;
+  $('fb-meta').textContent = a
+    ? `${a.state === 'frustration' ? 'Frustration' : 'Fatigue'} · ${a.causeLabel || a.cause} · High after ${a.consecutive} consecutive predictions`
+    : 'No feedback yet. Low and Medium risk never give feedback.';
+  $('fb-message').textContent = a ? a.message : '';
+  $('fb-details').hidden = !a;
+  if (a) { $('fb-action').textContent = a.action; $('fb-goal').textContent = a.goal; $('fb-reference').textContent = a.reference || '—'; }
+  $('alert-heading').textContent = alerts.length ? `Feedback this session (${alerts.length})` : 'Feedback this session';
+  $('alert-list').replaceChildren(...(alerts.length ? alerts.slice().reverse().map(x => el('li', {
+    textContent: `${x.state === 'frustration' ? 'Frustration' : 'Fatigue'} (${x.causeLabel || x.cause}${x.causeMatch === 'closest' ? ', closest pattern' : ''}): ${x.message}`
+      + (x.delivered === false ? ' (would have fired; data arrived late, not sent)' : '') }))
+    : [el('li', { className: 'muted', textContent: 'None yet.' })]));
+  for (const button of document.querySelectorAll('[data-kind]')) button.disabled = !a || busy;
+}
+
+function renderLog() {
+  const cellText = d => d?.available ? `${LEVELS[d.level].label}${d.causeLabel && d.level !== 'low' ? ` · ${d.causeLabel}` : ''}${d.streak?.level ? ` · High ${d.streak.count}/${d.streak.required}` : ''}` : 'Unavailable';
+  $('log').replaceChildren(...history.slice().reverse().map(entry => {
+    const f = entry.result.features || {};
+    return el('tr', {}, el('td', { className: 'num', textContent: entry.n }), el('td', { textContent: entry.phase }),
+      ...SIGNALS.map(s => el('td', { className: 'num', textContent: pct(f[`${s.key}ChangePct`]) })),
+      ...STATES.map(([key]) => el('td', { textContent: cellText(entry.result.states[key]) })),
+      el('td', { textContent: (entry.result.alerts || []).map(a => a.message).join(' ') || '—' }));
+  }));
+}
+
+function renderControls() {
+  const ready = Boolean(config && session);
+  const live = Boolean(following);
+  $('run').disabled = !ready || running || live;
+  $('run').textContent = stepIndex >= steps.length && history.length ? 'Replay scripted demo' : stepIndex ? 'Resume scripted demo' : 'Run scripted demo';
+  $('pause').disabled = !running;
+  $('step').disabled = !ready || running || busy || live || stepIndex >= steps.length;
+  $('reset').disabled = !ready || busy;
+  $('send-one').disabled = $('send-three').disabled = !ready || running || busy || live;
+  $('follow').textContent = live ? 'Stop following' : 'Follow session';
+  const followedMode = live ? latestResult?.mode : null;
+  $('mode-badge').textContent = !config ? 'OFFLINE' : followedMode === 'batch' ? 'DELAYED · EMPATICA BATCH'
+    : followedMode === 'demo' ? 'DEMO · REPLAYED RECORDING' : live ? 'LIVE' : 'DEMO · SYNTHETIC DATA';
+  $('session-label').textContent = live ? `Session ${following}` : session ? `Session ${session.session_id.slice(0, 22)}…` : '';
+  for (const button of document.querySelectorAll('[data-kind]')) button.disabled = !lastAlert || busy;
+}
+
+function render() {
+  renderInputs(latestResult);
+  for (const [key, title] of STATES) renderState(key, title, latestResult, latestNotes);
+  renderTimeline();
+  renderFeedback();
+  renderLog();
+  renderControls();
+}
+
+function setPhase(title, note, error = false) {
+  $('phase-title').textContent = title;
+  $('phase-note').textContent = note || '';
+  $('phase').classList.toggle('error', error);
+}
+
+async function refreshSummary() {
+  const id = following || session?.session_id;
+  if (!id) return;
+  try {
+    const response = await fetch(`/summary?session_id=${encodeURIComponent(id)}`);
+    const s = await response.json();
+    if (!response.ok) throw new Error(s.error);
+    const late = alerts.filter(a => a.delivered === false).length;
+    $('summary').textContent = `Saved locally: ${s.readings} readings · ${s.alerts} feedback alerts${late ? ` · ${late} would have fired (late data, not sent)` : ''} · ${s.responses} responses · ${s.outcomes} outcomes`;
+    $('export').hidden = false;
+    $('export').href = `/export?session_id=${encodeURIComponent(id)}`;
+    $('export').download = `${id}.json`;
+  } catch { /* summary is informational */ }
+}
+
+function stopFollowing() {
+  clearInterval(followTimer); followTimer = null; following = null;
+}
+
+const phaseLabel = mode => ({ batch: 'Empatica batch', demo: 'Replay' })[mode] || 'Live';
+
+async function poll() {
+  const id = following;
+  try {
+    // Ask for what is newer than the last reading shown, so a fast batch upload never skips any.
+    const last = latestResult?.timestamp_ms ?? -1;
+    const response = await fetch(`/history?session_id=${encodeURIComponent(id)}&limit=2000&after=${last}`, { cache: 'no-store' });
+    const fresh = await response.json();
+    if (!response.ok) throw new Error(fresh.error);
+    if (following !== id) return;
+    const title = `Following session ${id}`;
+    if (!fresh.length) {
+      if (!latestResult) setPhase(title, 'Waiting for readings.');
+      return;
+    }
+    setPhase(title, followNote(fresh.at(-1)));
+    for (const row of fresh) ingest(row, phaseLabel(row.mode), { draw: false });
+    render(); void refreshSummary();
+  } catch (error) { setPhase('Session unavailable', error.message, true); }
+}
+
+function followNote(row) {
+  if (row.features?.snapshot?.worn === false) return 'The device was not worn for this reading, so nothing is predicted from it.';
+  return ({
+    batch: 'Delayed Empatica data from AWS (30-minute uploads): one prediction every 30 s, logged; feedback is recorded but not sent.',
+    demo: 'Replaying a recorded Empatica session one reading at a time. Demo mode: High-frustration cues are delivered with a "Demonstration" prefix.',
+  })[row.mode] || 'Predictions come from the Polar H10 panel. Frustration needs an EDA sensor for EDA and SCR.';
+}
+
+async function backfill(id) {
+  // Enough readings to fill the timeline at one prediction every 30 s; the cue list covers the whole session.
+  const [historyResponse, cueResponse] = await Promise.all([
+    fetch(`/history?session_id=${encodeURIComponent(id)}&limit=2000`, { cache: 'no-store' }),
+    fetch(`/cues?session_id=${encodeURIComponent(id)}`, { cache: 'no-store' }),
+  ]);
+  const [rows, cues] = await Promise.all([historyResponse.json(), cueResponse.json()]);
+  if (!historyResponse.ok) throw new Error(rows.error);
+  if (!cueResponse.ok) throw new Error(cues.error);
+  if (following !== id) return;
+  for (const row of rows) ingest(row, phaseLabel(row.mode), { speak: false, draw: false });
+  alerts = cues.slice().reverse();
+  if (rows.length) setPhase(`Following session ${id}`, followNote(rows.at(-1)));
+  render(); void refreshSummary();
+}
+
+async function loadSessions(selected = null) {
+  const picker = $('session-picker');
+  let polar = null;
+  try { polar = localStorage.getItem('polar-last-saved-session'); } catch { /* storage may be blocked */ }
+  try {
+    const response = await fetch('/sessions?limit=100', { cache: 'no-store' });
+    const rows = await response.json();
+    if (!response.ok) throw new Error(rows.error);
+    // Hide the scripted demo's throwaway sessions and any session with nothing saved yet.
+    const usable = rows.filter(r => r.readings > 0 && !r.session_id.startsWith('team3-demo-'));
+    const keep = selected || picker.value || polar || '';
+    picker.replaceChildren(el('option', { value: '', textContent: usable.length ? 'Choose a saved session…' : 'No saved sessions yet' }),
+      ...usable.map(r => el('option', { value: r.session_id, textContent:
+        `${r.session_id} · ${r.mode}${r.session_id === polar ? ' · last Polar' : ''} · ${r.readings} readings` })));
+    if (usable.some(r => r.session_id === keep)) picker.value = keep;
+  } catch { /* the picker is a convenience; ?session=<id> still works */ }
+}
+
+function follow(requested = null) {
+  if (following && !requested) { stopFollowing(); window.history.replaceState(null, '', location.pathname); newSession(); return; }
+  const id = requested || $('session-picker').value;
+  if (!id) { setPhase('Choose a session', 'Pick a saved session first. Empatica sessions come from tools/empatica_bridge.py; Polar sessions from the platform dashboard.', true); return; }
+  running = false; stopFollowing();
+  following = id; session = null; history = []; alerts = []; lastAlert = null; lastStreak = {}; latestResult = null; latestNotes = {};
+  // The address bar always holds a link to this session, ready to share.
+  window.history.replaceState(null, '', `?session=${encodeURIComponent(id)}`);
+  setPhase(`Following session ${id}`, 'Loading recent readings…');
+  render();
+  // Load recent history first so newer polled readings always append in order.
+  backfill(id).catch(error => setPhase('Session history unavailable', error.message, true)).then(() => {
+    if (following !== id) return;
+    void poll();
+    followTimer = setInterval(poll, 1000);
+  });
+}
+
+function manualValues() {
+  return Object.fromEntries(SIGNALS.map(s => [s.key, Number($(`manual-${s.key}`).value) || 0]));
+}
+
+function renderStatic() {
+  $('required-lede').textContent = required();
+  $('presets').replaceChildren(...Object.keys(config.scenario.patterns).map(name => {
+    const button = el('button', { type: 'button', textContent: PRESET_NAMES[name] || name });
+    button.addEventListener('click', () => {
+      for (const s of SIGNALS) $(`manual-${s.key}`).value = config.scenario.patterns[name][s.key];
+    });
+    return button;
+  }));
+  $('manual').replaceChildren(...SIGNALS.map(s => el('label', {}, `${s.name} %`,
+    el('input', { type: 'number', id: `manual-${s.key}`, step: '1', value: config.scenario.patterns.rest[s.key] }))));
+
+  const signalKeys = ['edaChangePct', 'scrChangePct', 'hrChangePct', 'rmssdChangePct', 'sdnnChangePct'];
+  const describe = (rule, signal) => {
+    const cs = rule.conditions.filter(c => c.signal === signal);
+    if (!cs.length) return '—';
+    if (cs.length === 2) return `${Math.min(...cs.map(c => c.value))} to ${Math.max(...cs.map(c => c.value))}`;
+    return `${cs[0].operator} ${cs[0].value}`;
+  };
+  const tables = [];
+  for (const [key, title] of STATES) {
+    const state = config.rules.states[key];
+    const order = { high: 0, medium: 1, low: 2 };
+    const rows = [...state.rules].sort((a, b) => Object.keys(state.causes).indexOf(a.cause) - Object.keys(state.causes).indexOf(b.cause) || order[a.level] - order[b.level]);
+    tables.push(el('h3', { textContent: title, style: 'margin:12px 0 4px' }), el('table', {},
+      el('thead', {}, el('tr', {}, ...['Cause (DBR arrows)', 'Level', 'EDA', 'SCR', 'HR', 'RMSSD', 'SDNN'].map(h => el('th', { textContent: h })))),
+      el('tbody', {}, ...rows.map(rule => {
+        const cause = state.causes[rule.cause];
+        const pattern = cause?.pattern ? Object.entries(cause.pattern).map(([k, v]) => `${k} ${v}`).join(', ') : '';
+        return el('tr', {}, el('td', { textContent: `${cause?.label || rule.cause}${rule.level === 'high' && pattern ? ` (${pattern})` : ''}` }),
+          el('td', { textContent: LEVELS[rule.level].label }), ...signalKeys.map(k => el('td', { className: 'num', textContent: describe(rule, k) })));
+      }))));
+  }
+  $('rules-tables').replaceChildren(...tables);
+
+  const fbRows = [];
+  for (const [key, title] of STATES) {
+    for (const [level, row] of Object.entries(config.feedback.states[key])) {
+      if (!row.enabled) { fbRows.push(el('tr', {}, el('td', { textContent: `${title} · ${LEVELS[level].label}` }), el('td', { textContent: 'Any' }),
+        el('td', { textContent: 'No feedback' }), el('td', { textContent: 'No task modification' }), el('td', { textContent: row.note || '' }))); continue; }
+      for (const [cause, text] of Object.entries(row.causes)) {
+        fbRows.push(el('tr', {}, el('td', { textContent: `${title} · ${LEVELS[level].label}` }),
+          el('td', { textContent: config.rules.states[key].causes?.[cause]?.label || cause }),
+          el('td', { textContent: `“${text.message}”` }), el('td', { textContent: text.action }), el('td', { textContent: text.goal })));
+      }
+    }
+  }
+  $('feedback-table').replaceChildren(el('p', { className: 'small',
+    textContent: `High feedback is issued after ${required()} consecutive High predictions. Cooldown ${config.feedback.decision.cooldownSeconds} s per state; at most ${config.feedback.decision.maxWarnings} alerts per ${config.feedback.decision.warningWindowSeconds / 60} min.` }),
+    el('table', {}, el('thead', {}, el('tr', {}, ...['State · level', 'Cause', 'Feedback (audio + screen)', 'Closed-loop task action', 'Goal / note'].map(h => el('th', { textContent: h })))),
+      el('tbody', {}, ...fbRows)));
+}
+
+async function loadModelReport() {
+  const box = $('ml-report');
+  try {
+    const file = config.rules.states.frustration.reportFile;
+    if (!file) throw new Error('no reportFile in config/rules.json');
+    const response = await fetch(`/${file}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const r = await response.json();
+    const pctText = v => `${(v * 100).toFixed(1)}%`;
+    // Numeric columns are right-aligned in both header and body so values sit under their heading.
+    const table = (head, rows, numeric) => el('div', { className: 'table-wrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, ...head.map((h, i) => el('th', { className: numeric.includes(i) ? 'num' : '', textContent: h })))),
+      el('tbody', {}, ...rows.map(row => el('tr', {}, ...row.map((v, i) => el('td', { className: numeric.includes(i) ? 'num' : '', textContent: v })))))));
+    if (r.profile === 'seen-participants') {
+      const unseen = r.evaluations.find(e => e.scope === 'unseen participants');
+      box.replaceChildren(
+        el('p', {}, el('strong', { textContent: `${pctText(r.headline.accuracy)} accuracy on a random window split` }),
+          ` (participants seen in training; ${r.selectedModel.family} ${JSON.stringify(r.selectedModel.params)}).`),
+        el('p', { className: 'small', textContent: `${r.data.participants} participants, ${r.data.sessions} sessions, `
+          + `${r.data.windows} overlapping one-minute windows. The same model scored every way below. On workers who are not in the `
+          + `training data, expect about ${pctText(unseen.accuracy)}. The fake-label control scores almost as high as the headline, `
+          + 'so much of the headline comes from recognizing the person rather than frustration.' }),
+        table(['Test', 'Accuracy', 'Who is tested', 'What it shows'],
+          r.evaluations.map(e => [e.name, pctText(e.accuracy), e.scope, e.meaning]), [1]));
+      return;
+    }
+    const sel = r.nestedLopo.selected;
+    const byId = (a, b) => Number(a.participant.slice(1)) - Number(b.participant.slice(1));
+    const families = Object.keys(r.nestedLopo).filter(k => k !== 'selected');
+    const control = r.controls, previous = r.previousModel;
+    box.replaceChildren(
+      el('p', {}, el('strong', { textContent: `${pctText(sel.windowAccuracy)} accuracy on new people (people the model never trained on)` }),
+        ` (95% CI ${pctText(sel.windowAccuracy95CI[0])}–${pctText(sel.windowAccuracy95CI[1])}; macro-F1 ${sel.macroF1.toFixed(2)}).`),
+      el('p', { className: 'small', textContent: `Nested leave-one-participant-out cross-validation on ${r.data.participants} participants, `
+        + `${r.data.sessions} sessions and ${r.data.windows} one-minute windows. Deployed: ${r.selectedModel.family} `
+        + `(${Object.entries(r.selectedModel.params).map(([k, v]) => `${k.replaceAll('_', ' ')} ${v}`).join(', ')}). Chance for three classes is 33%. A random window split scores `
+        + `${pctText(r.baselines.randomWindowSplitLeaky.windowAccuracy)}, but that tests on people seen in training, so it overstates accuracy.` }),
+      ...(control ? [el('h3', { textContent: 'Controls and the previous model' }),
+        table(['Test', 'Accuracy', 'What it shows'], [
+          ['This model: new people (nested)', pctText(sel.windowAccuracy), 'The number to expect for a new worker.'],
+          ['This model: fake labels, random split', pctText(control.fakeLabelRandomSplitAccuracy), 'Each participant gets a random label. A score well above 33% means the model recognizes people.'],
+          ['Chance on new people (permutation test)', `${pctText(control.permutation.chanceMean)} mean, ${pctText(control.permutation.chance95th)} 95th pct`,
+            `Fixed settings score ${pctText(control.permutation.realLopoAccuracy)} on real labels; p = ${control.permutation.pValue}.`],
+          ...(previous ? [
+            ['Previous model: random split', pctText(previous.randomSplitAccuracy), `${previous.family}. The figure it was reported with; mostly person recognition.`],
+            ['Previous model: new people', pctText(previous.newPeopleAccuracy), 'Its accuracy for a new worker, near chance.'],
+            ['Previous model: fake labels, random split', pctText(previous.fakeLabelRandomSplitAccuracy), 'Nearly its headline score, on labels with no meaning.'],
+          ] : []),
+        ], [1])] : []),
+      el('h3', { textContent: 'Model families and per-wearer scalings (each tuned only on training participants)' }),
+      table(['Model', 'Accuracy', 'Macro-F1', 'Session vote', 'Recall L / M / H'], [...families, 'selected'].map(f => {
+        const x = r.nestedLopo[f];
+        return [f === 'selected' ? 'Full selection procedure' : f, pctText(x.windowAccuracy), x.macroF1.toFixed(2),
+          pctText(x.sessionVoteAccuracy), ['low', 'medium', 'high'].map(c => x.recall[c].toFixed(2)).join(' / ')];
+      }), [1, 2, 3, 4]),
+      el('h3', { textContent: 'Confusion matrix (rows: true level, columns: predicted)' }),
+      table(['True level', 'Low', 'Medium', 'High'], sel.confusion.matrix.map((row, i) => [LEVELS[['low', 'medium', 'high'][i]].label, ...row.map(String)]), [1, 2, 3]),
+      el('h3', { textContent: 'Per participant (held out)' }),
+      table(['Participant', 'Label', 'Windows', 'Accuracy'], [...sel.perParticipant].sort(byId).map(p => [p.participant, p.labels.join(' / '), String(p.windows), pctText(p.accuracy)]), [2, 3]));
+  } catch (error) {
+    box.replaceChildren(el('p', { className: 'small', textContent: `No model report found (${error.message}). Train with python3 training/train_frustration_model.py.` }));
+  }
+}
+
+$('run').addEventListener('click', () => void run());
+$('pause').addEventListener('click', () => { running = false; renderControls(); });
+$('step').addEventListener('click', () => void guarded(stepOnce));
+$('reset').addEventListener('click', () => newSession());
+$('speed').addEventListener('change', e => { speed = Number(e.target.value); });
+$('follow').addEventListener('click', () => follow());
+$('session-picker').addEventListener('pointerdown', () => void loadSessions());
+$('session-picker').addEventListener('focus', () => void loadSessions());
+$('speak').addEventListener('change', e => { if (!e.target.checked) globalThis.speechSynthesis?.cancel(); });
+$('send-one').addEventListener('click', () => void guarded(async () => { setPhase('Manual input', 'Your values, sent as one prediction.'); await send(manualValues(), 'Manual input'); }));
+$('send-three').addEventListener('click', () => void guarded(async () => {
+  setPhase('Manual input', 'Your values, sent as three consecutive predictions.');
+  for (let i = 0; i < 3; i++) await send(manualValues(), 'Manual input');
+}));
+for (const button of document.querySelectorAll('[data-kind]')) {
+  button.addEventListener('click', () => void guarded(async () => {
+    const id = following || session?.session_id;
+    const { kind, value } = button.dataset;
+    const response = await fetch('/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: id, kind, alert_id: lastAlert.id, [kind]: value }) });
+    const result = await response.json();
+    $('fb-status').textContent = response.ok ? `${kind === 'response' ? 'Response' : 'Outcome'} saved: ${value.replace('-', ' ')}.` : `Not saved: ${result.error}`;
+    void refreshSummary();
+  }));
+}
+if (!globalThis.speechSynthesis) { $('speak').disabled = true; $('speak').parentElement.title = 'Speech is unavailable in this browser.'; }
+
+loadConfig().then(() => {
+  renderStatic(); newSession(); void loadModelReport();
+  // ?session=<id> is a shareable link to any saved session; the picker lists them all.
+  const requested = new URLSearchParams(location.search).get('session');
+  void loadSessions(requested);
+  if (requested) follow(requested);
+}).catch(error => {
+  setPhase('Configuration unavailable', `${error.message}. Start the local server (python3 serve_dashboard.py) and open http://127.0.0.1:8000/serving/dashboard.html.`, true);
+  renderControls();
+});
+</script>
+</body>
+</html>

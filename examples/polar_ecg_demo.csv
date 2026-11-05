@@ -1,0 +1,4 @@
+timestamp,ecg_uv,note
+1700000000000000000,-42,synthetic raw ECG
+1700000000007692308,15,synthetic raw ECG
+1700000000015384615,80,synthetic raw ECG
