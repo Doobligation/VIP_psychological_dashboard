@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "team3-frustration-fatigue-2026-10-29-ml",
+  "version": "team3-frustration-fatigue-2026-11-04-quality",
   "scoreSemantics": "Heuristic rule severity score; not a calibrated physiological probability.",
   "riskLevels": [
     "low",
@@ -14,6 +14,32 @@
     "rrMinMs": 300,
     "rrMaxMs": 2000,
     "baselineSamples": 3
+  },
+  "sourcePolicies": {
+    "empatica-avro": {
+      "note": "Wrist PPG and EDA from the EmbracePlus. See docs/TEAM3_FRUSTRATION_FATIGUE.md, section Signal quality, for how each value was measured.",
+      "featurePolicy": {
+        "windowSeconds": 60,
+        "freshSeconds": 5,
+        "minRr": 30,
+        "rrMinMs": 300,
+        "rrMaxMs": 2000,
+        "baselineSamples": 30
+      },
+      "beatTolerance": 0.2,
+      "beatNeighbours": 5,
+      "minCleanBeatFraction": 0.6,
+      "edaFloorUs": 0.05,
+      "scrFloorPerMinute": 1,
+      "baselineHistorySeconds": 1200,
+      "baselineGapSeconds": 60,
+      "baselineMinSeconds": 120,
+      "predictionSeconds": 30,
+      "wear": {
+        "minPercent": 50,
+        "minTemperatureC": 27
+      }
+    }
   },
   "probabilityBands": [
     {
@@ -45,6 +71,7 @@
     "frustration": {
       "enabled": true,
       "method": "ml-level-with-rule-causes",
+      "closestPatternMinSignals": 4,
       "defaultLevel": "low",
       "requiredSignals": [
         "edaChangePct",
@@ -697,8 +724,8 @@
           "explanation": "Low frustration: the Poor Communication / Unclear Instructions pattern in the DBR masterfile matches the measured baseline changes."
         }
       ],
-      "modelFile": "models/team3_frustration_seen_model.json",
-      "reportFile": "models/team3_frustration_seen_report.json",
+      "modelFile": "models/team3_frustration_model.json",
+      "reportFile": "models/team3_frustration_report.json",
       "modelNote": "Team decision: deep XGBoost scored on participants seen in training. For workers not in the training data use models/team3_frustration_model.json (nested leave-one-participant-out)."
     },
     "fatigue": {

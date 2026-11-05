@@ -1,5 +1,7 @@
 venv
 .env
+.env.*
+!.env.example
 __pycache__/
 biomarker_data/
 voice_coach_log.csv

@@ -127,6 +127,64 @@ class RunTests(unittest.TestCase):
     def _ok(sample):
         return dict(states={})
 
+    def wear_csv(self, day, rows, enrollment='11'):
+        folder = self.root / f'{day}/{enrollment}-3YK3K151Y5/digital_biomarkers/aggregated_per_minute'
+        folder.mkdir(parents=True, exist_ok=True)
+        lines = ['timestamp_unix,timestamp_iso,participant_full_id,wearing_detection_percentage,missing_value_reason']
+        lines += [f'{minute * 60000},t,p,{percent},' for minute, percent in rows]
+        (folder / f'1-1-{enrollment}_{day}_wearing-detection.csv').write_text('\n'.join(lines))
+
+    def test_published_wear_flag_wins_and_temperature_decides_when_it_is_absent(self):
+        from tools.empatica_bridge import LocalSource, WearCheck
+        day = '2024-05-16'
+        minute = self.start // 60
+        self.wear_csv(day, [(minute, 0), (minute + 1, 100), (minute + 2, '')])
+        key = f'{day}/11-3YK3K151Y5/raw_data/v6/1-1-11_{self.start}.avro'
+        check = WearCheck(LocalSource(self.root), dict(minPercent=50, minTemperatureC=27))
+        at = lambda m: (minute + m) * 60
+        self.assertFalse(check.worn(key, at(0), 33.0))   # flagged off, despite a warm reading
+        self.assertTrue(check.worn(key, at(1), 22.0))    # flagged on, despite a cold reading
+        self.assertFalse(check.worn(key, at(2), 22.0))   # blank row: room temperature means off the wrist
+        self.assertTrue(check.worn(key, at(2), 31.0))
+        self.assertTrue(check.worn(key, at(2), None))    # no evidence either way
+
+    def test_unworn_recording_is_flagged_and_produces_no_cues(self):
+        from tools.empatica_bridge import LocalSource, run
+        minute = self.start // 60
+        self.wear_csv('2024-05-16', [(minute + i, 0) for i in range(10)])
+        with tempfile.TemporaryDirectory() as d:
+            pipe = FeedbackPipeline(rules=stub_rules(d, 'high'))
+            outs, sent = [], []
+            def send(sample):
+                sent.append(sample)
+                outs.append(pipe.process(sample))
+                return outs[-1]
+            results = run(LocalSource(self.root), ['2024-05-16'], send, participant='11', quiet=True)
+        self.assertTrue(all(s['raw']['contact'] is False for s in sent))
+        self.assertEqual(sum(r['notWorn'] for r in results), len(sent))
+        self.assertEqual(sum(r['wouldAlerts'] for r in results), 0)
+        self.assertFalse(any(o['states']['frustration']['available'] for o in outs))
+
+    def test_sent_files_are_remembered_per_session_so_a_recording_can_be_rerun(self):
+        from tools.empatica_bridge import STATE_FILE, state_path
+        self.assertEqual(state_path(None), STATE_FILE)
+        self.assertNotEqual(state_path('retest-1'), state_path('retest-2'))
+        self.assertEqual(state_path('a/b c').name, f'{STATE_FILE.stem}-a_b_c.json')
+        self.assertEqual(state_path('x', Path('/tmp/chosen.json')), Path('/tmp/chosen.json'))
+
+    def test_empty_result_names_who_is_really_there(self):
+        from tools.empatica_bridge import LocalSource, availability, explain_empty
+        source = LocalSource(self.root)
+        self.assertEqual(availability(source, '2024-05-16')['11'], (2, 0))
+        # An enrollment name can change by a letter between days, which reads like missing data.
+        message = explain_empty(source, ['2024-05-16'], '12')
+        self.assertIn('no enrollment named 12', message)
+        self.assertIn('11 (2 Avro)', message)
+        self.wear_csv('2024-05-17', [(1, 100)], enrollment='11')
+        self.assertIn('no raw Avro yet', explain_empty(source, ['2024-05-17'], '11'))
+        self.assertIn('nothing on the source', explain_empty(source, ['2024-05-18'], None))
+        self.assertIn('already sent', explain_empty(source, ['2024-05-16'], '11'))
+
     def test_batch_mode_records_cues_without_delivering_and_keeps_cooldown(self):
         from tools.empatica_bridge import LocalSource, run
         with tempfile.TemporaryDirectory() as d:
@@ -145,6 +203,47 @@ class RunTests(unittest.TestCase):
 
 
 class ServerTests(unittest.TestCase):
+    def batch(self, count, session='picker', start=None):
+        from pipeline.frustration_model import FEATURES  # noqa: F401
+        first = start if start is not None else int(time.time()) - 7200
+        results = []
+        for i in range(count):
+            results.append(self.service.process_sample(dict(
+                session_id=session, participant='empatica-x', mode='batch', sample_id=str(i), timestamp_ms=(first + i) * 1000,
+                raw=dict(source='empatica-avro', eda_us=2 + math.sin(i / 7) / 10, temp_c=33.0, hr=75.0, rr_intervals_ms=[800.0]))))
+        return first, results
+
+    def test_sessions_lists_every_saved_session_newest_first(self):
+        self.assertEqual(self.service.sessions(), [])
+        self.batch(3, 'older')
+        self.batch(2, 'newer')
+        rows = self.service.sessions()
+        self.assertEqual([r['session_id'] for r in rows], ['newer', 'older'])
+        self.assertEqual((rows[0]['readings'], rows[0]['mode']), (2, 'batch'))
+        with self.assertRaises(ValueError):
+            self.service.sessions(0)
+
+    def test_history_after_a_time_returns_the_oldest_newer_rows_so_nothing_is_skipped(self):
+        first, _ = self.batch(10)
+        page = self.service.history('picker', 3, after=(first + 2) * 1000)
+        self.assertEqual([row['timestamp_ms'] // 1000 for row in page], [first + 3, first + 4, first + 5])
+        self.assertEqual(self.service.history('picker', 3)[-1]['timestamp_ms'] // 1000, first + 9)
+
+    def test_cues_lists_would_be_cues_from_late_data(self):
+        with tempfile.TemporaryDirectory() as d:
+            from serving.server import ClosedLoopService
+            self.service.close()
+            self.service = ClosedLoopService(Path(self.temp.name) / 'cues.sqlite3')
+            from pipeline import FeedbackPipeline
+            self.service.pipeline = FeedbackPipeline(rules=stub_rules(d, 'high'))
+            _, results = self.batch(200)
+            expected = sum(bool(r['states']['frustration'].get('wouldAlert')) for r in results)
+            cues = self.service.cues('picker')
+        self.assertEqual(expected, 1)
+        self.assertEqual(len(cues), 1)
+        self.assertEqual((cues[0]['state'], cues[0]['delivered'], cues[0]['consecutive']), ('frustration', False, 3))
+        self.assertTrue(cues[0]['message'])
+
     def setUp(self):
         from serving.server import ClosedLoopService
         self.temp = tempfile.TemporaryDirectory()

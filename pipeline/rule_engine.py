@@ -27,6 +27,37 @@ class RuleEngine:
                 if rule['match'] not in ('all', 'any') or any(c['operator'] not in OPERATORS for c in rule['conditions']):
                     raise ValueError('Unknown rule match or condition operator.')
 
+    def closest_cause(self, evidence, state='frustration'):
+        """The DBR cause pattern nearest the measured signals, when no pattern matches exactly.
+
+        Each signal counts for a cause if it meets that cause's thresholds at any level. Causes
+        rank by how many signals agree, then by the strictest thresholds met (the engine's usual
+        "most specific" tie-break), because several causes share the same Low thresholds and
+        differ only at Medium and High. Returns None below the configured minimum."""
+        policy = self.rules['states'].get(state, {})
+        needed = policy.get('closestPatternMinSignals')
+        if not needed:
+            return None
+        best = None
+        for order, cause in enumerate(policy.get('causes', {})):
+            strength = {}
+            for rule in policy['rules']:
+                if rule['cause'] != cause:
+                    continue
+                conditions = {}
+                for condition in rule['conditions']:
+                    conditions.setdefault(condition['signal'], []).append(condition)
+                for signal, parts in conditions.items():
+                    if signal in evidence and all(OPERATORS[c['operator']](evidence[signal], c['value']) for c in parts):
+                        strength[signal] = max(strength.get(signal, 0), sum(abs(c['value']) for c in parts))
+            rank = (len(strength), sum(strength.values()), -order)
+            if strength and (best is None or rank > best[0]):
+                best = (rank, cause, sorted(strength))
+        if best is None or best[0][0] < needed:
+            return None
+        return dict(cause=best[1], label=policy['causes'][best[1]].get('label', best[1]), agreeing=best[0][0],
+                    total=len(policy['requiredSignals']), signals=best[2])
+
     def evaluate(self, features, state='fatigue'):
         policy = self.rules['states'].get(state)
         evidence = {key: value for key, value in features.items() if finite(value)}

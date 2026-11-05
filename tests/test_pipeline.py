@@ -308,6 +308,9 @@ class DecisionTests(unittest.TestCase):
 
     def test_count_restarts_after_feedback_and_cooldown_limits_repeats(self):
         cooldown_ms = self.feedback['decision']['cooldownSeconds'] * 1000
+        feedback = copy.deepcopy(self.feedback)
+        feedback['decision']['sameCueRepeatSeconds'] = 0  # this test is about the cooldown alone
+        self.decision = DecisionEngine(feedback)
         outs = self.run_levels(['high'] * 6)
         self.assertEqual([o['streak']['count'] for o in outs], [1, 2, 3, 1, 2, 3])
         self.assertTrue(outs[2]['alert'])
@@ -317,7 +320,7 @@ class DecisionTests(unittest.TestCase):
 
     def test_warning_cap_limits_alerts_across_states(self):
         feedback = copy.deepcopy(self.feedback)
-        feedback['decision'].update(cooldownSeconds=0, maxWarnings=1)
+        feedback['decision'].update(cooldownSeconds=0, maxWarnings=1, sameCueRepeatSeconds=0)
         self.decision = DecisionEngine(feedback)
         outs = self.run_levels(['high'] * 6)
         self.assertTrue(outs[2]['alert'])

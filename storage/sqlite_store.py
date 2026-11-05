@@ -92,6 +92,28 @@ class SQLiteStore:
                                        (session_id, limit)).fetchall()
         return [dict(row) for row in reversed(rows)]
 
+    def newer(self, session_id, after_ms, limit):
+        """The oldest `limit` readings after a time, so a reader catching up never skips any."""
+        rows = self.connection.execute('SELECT * FROM readings WHERE session_id=? AND timestamp_ms>? ORDER BY timestamp_ms, sequence LIMIT ?',
+                                       (session_id, after_ms, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    def sessions(self, limit):
+        """Saved sessions, most recently updated first."""
+        rows = self.connection.execute(
+            'SELECT s.session_id, s.participant, s.mode, COUNT(r.sequence) AS readings, MAX(r.timestamp_ms) AS last_ms, '
+            'MAX(r.received_ms) AS received_ms FROM sessions s LEFT JOIN readings r ON r.session_id=s.session_id '
+            'GROUP BY s.session_id ORDER BY received_ms DESC LIMIT ?', (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def cue_rows(self, session_id):
+        """Results holding a delivered or would-be cue; dumps() writes these keys without spaces."""
+        rows = self.connection.execute(
+            """SELECT timestamp_ms, result_json FROM readings WHERE session_id=?
+               AND (result_json LIKE '%"alert":{%' OR result_json LIKE '%"wouldAlert":{%') ORDER BY timestamp_ms, sequence""",
+            (session_id,)).fetchall()
+        return [dict(row) for row in rows]
+
     def latest(self, session_id):
         row = self.connection.execute('SELECT * FROM readings WHERE session_id=? ORDER BY timestamp_ms DESC, sequence DESC LIMIT 1',
                                       (session_id,)).fetchone()

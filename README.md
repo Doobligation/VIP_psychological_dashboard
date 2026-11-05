@@ -9,17 +9,18 @@ resting baseline (EDA, SCR, HR, RMSSD, SDNN) using the DBR masterfile rules. **O
 risk gives feedback, and only after 3 consecutive High predictions**; a Low or Medium
 prediction resets the count. Thresholds and messages live in `config/`, not in code.
 
-When EDA and skin temperature are streamed, an XGBoost model sets the frustration level and
-the DBR rules name the cause. The deployed model scores **87.5% on a random window split**
-(participants seen in training) and 48.9% on new people. A cautious Extra-Trees model, 58.1% on
-new people (nested leave-one-participant-out), can be selected in `config/rules.json`.
-Retrain with `python3 training/train_frustration_model.py [--profile unseen]` (labelled sessions in
-`.local/data/Frustration`, never committed). Evaluation reports are in `models/` and on the dashboard.
+When EDA and skin temperature are streamed, an Extra-Trees model sets the frustration level and
+the DBR rules name the cause where they can. **Expect about 66% accuracy on a new worker** (nested
+leave-one-participant-out, 95% interval 43–83%, 15 participants). The previous model's 87.5% was a
+random window split; it scored 48.9% on new people. Retrain with
+`python3 training/train_frustration_model.py` (labelled sessions in `.local/data/Frustration`, never
+committed). Evaluation reports are in `models/` and on the dashboard. See
+[the write-up](docs/TEAM3_FRUSTRATION_FATIGUE.md) and [the response to the November review](docs/REVIEW_RESPONSE_2026-11.md).
 
 Empatica EmbracePlus data arrives through AWS S3 in 30-minute files, so it is delayed. Run
 `python3 tools/empatica_bridge.py --url http://127.0.0.1:8000 --participant <enrollment> --since <UTC start> --session-id <name> --poll 60`
-to feed it in; its predictions are logged, and cues that would have fired are recorded but not sent. Then open
-`/serving/dashboard.html?session=<name>`. Details are in the Team 3 guide.
+to feed it in; its predictions are logged, and cues that would have fired are recorded but not sent. Then pick
+the session in the dashboard's Session menu. Details are in the Team 3 guide.
 
 ```bash
 python3 serve_dashboard.py
@@ -161,9 +162,12 @@ JSON without overwriting the maintained HTML, server, or README.
 - Zone, summary, alerts, and worker queue all update to include the live worker.
 
 ## Run order
+This older worker-queue view reads per-minute predictions from the poller below. The Team 3
+frustration and fatigue dashboard does not: it uses `tools/empatica_bridge.py`, described above.
+
 ### 1) Start the live wristband poller
 ```bash
-python avro_stream_poller_with_ml.py
+PORT=7000 python avro_stream_poller_with_ml.py
 ```
 That serves the live endpoint at:
 ```text
@@ -225,6 +229,6 @@ python worksite_voice_coach.py --demo --announce-start --verbose
 - `live_dashboard_backend.py` — polls the live stream and injects the live worker into dashboard data
 - `psychosocial_dashboard.html` — updated dashboard front end
 - `dashboard_data.json` — historical baseline dataset
-- `avro_stream_poller_with_ml.py` — live wristband polling + ML prediction API
+- `avro_stream_poller_with_ml.py` — legacy wristband polling + older ML prediction API for this view and the voice coach
 - `biomarker_runtime.py` — runtime predictor helper
 - `models/` — trained model files and metadata

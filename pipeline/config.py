@@ -24,8 +24,27 @@ def validate_feature_policy(value):
     return p
 
 
+def _validate_source_policies(policies):
+    """Measurement settings for a raw wearable source, keyed by the sample's raw.source."""
+    if not isinstance(policies, dict):
+        raise ValueError('sourcePolicies must be an object.')
+    for policy in policies.values():
+        validate_feature_policy(policy['featurePolicy'])
+        if not 0 < policy['beatTolerance'] < 1 or not 0 <= policy['minCleanBeatFraction'] <= 1:
+            raise ValueError('Beat cleaning settings must be fractions.')
+        for key in ('beatNeighbours', 'baselineMinSeconds'):
+            if not _number(policy[key], 1, True):
+                raise ValueError(f'{key} must be a positive integer.')
+        for key in ('edaFloorUs', 'scrFloorPerMinute', 'baselineHistorySeconds', 'baselineGapSeconds', 'predictionSeconds'):
+            if not _number(policy[key], .000001):
+                raise ValueError(f'{key} must be positive.')
+        if not 0 <= policy['wear']['minPercent'] <= 100 or not finite(policy['wear']['minTemperatureC']):
+            raise ValueError('Invalid wear detection settings.')
+
+
 def _validate_rules(data):
     validate_feature_policy(data['featurePolicy'])
+    _validate_source_policies(data.get('sourcePolicies', {}))
     bands = data['probabilityBands']
     if not isinstance(bands, list) or not bands or bands[0]['min'] != 0:
         raise ValueError('Score bands must start at zero.')
@@ -41,7 +60,9 @@ def _validate_rules(data):
         if (not isinstance(state['enabled'], bool) or not isinstance(signals, list)
                 or not all(isinstance(s, str) and s for s in signals) or len(signals) != len(set(signals))
                 or not _number(state['minEvidence'], 1, True) or not isinstance(state['rules'], list)
-                or (state['enabled'] and state['minEvidence'] > len(signals))):
+                or (state['enabled'] and state['minEvidence'] > len(signals))
+                or not _number(state.get('closestPatternMinSignals', 0), 0, True)
+                or state.get('closestPatternMinSignals', 0) > len(signals)):
             raise ValueError('Invalid state minimum evidence or signals.')
         for rule in state['rules']:
             conditions = rule['conditions']
@@ -67,6 +88,8 @@ def _validate_feedback(data):
             or not _number(d['consecutiveHighPredictions'], 1, True)
             or not _number(d['warningWindowSeconds'], .000001) or not _number(d['maxWarnings'], 0, True)):
         raise ValueError('Invalid decision timing, consecutive prediction count or warning limit.')
+    if not _number(d.get('sameCueRepeatSeconds', 0)):
+        raise ValueError('sameCueRepeatSeconds must be nonnegative.')
     for levels in data['states'].values():
         if not isinstance(levels, dict):
             raise ValueError('Feedback state levels must be objects.')

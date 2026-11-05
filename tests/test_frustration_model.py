@@ -99,7 +99,8 @@ class ModelFileTests(unittest.TestCase):
         level, probabilities = model.predict(window_features(eda, [33.0 + i / 100 for i in range(60)], (1.8, 2.2), (33, 34)))
         self.assertIn(level, CLASSES)
         self.assertAlmostEqual(sum(probabilities.values()), 1)
-        self.assertIn(model.data['evaluation']['scope'], ('seen participants', 'unseen participants'))
+        self.assertEqual(model.data['evaluation']['scope'], 'new people')
+        self.assertEqual(model.normalization, 'rolling-z')
 
     def test_rejects_models_with_other_features(self):
         with tempfile.TemporaryDirectory() as d:

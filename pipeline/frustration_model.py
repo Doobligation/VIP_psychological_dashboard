@@ -1,9 +1,15 @@
 """Frustration ML: shared window features, live EDA/temperature tracking and portable inference.
 
 Training (training/train_frustration_model.py) and the live server use the same
-`window_features`, so a model sees identical inputs in both places. Signals are scaled by
-the running min/max of the session so far, which needs no resting baseline, never uses
-future data, and works for raw microsiemens or already-normalized values alike.
+`window_features` and `signal_scale`, so a model sees identical inputs in both places. Each
+signal is scaled per wearer using only that session's earlier data, one of three ways:
+
+  running-minmax  the session's running min/max
+  baseline-z      z-score against the wearer's first minute
+  rolling-z       z-score against the wearer's recent past, the current window excluded (deployed)
+
+All are unchanged by a linear rescale of the input, so a model trained on the labelled files
+(already min-max scaled) receives the same features from raw microsiemens.
 """
 import json
 import math
@@ -18,6 +24,14 @@ WINDOW_SECONDS = 60
 MIN_WINDOW_SECONDS = 55
 # Peak thresholds are fractions of the session's running EDA range (SCR-like responses).
 PEAK_AMPLITUDE, SMALL_PEAK_AMPLITUDE = .05, .02
+NORMALIZATIONS = ('running-minmax', 'baseline-z', 'rolling-z')
+ROLLING_HISTORY_SECONDS = 1200
+# z-scored signals are divided by this many standard deviations, keeping feature magnitudes
+# and the peak fractions above comparable across normalizations (peaks at 0.5 and 0.2 SD).
+Z_SPAN = 10
+# A nearly flat reference minute cannot define a unit, so the SD has a floor of 1% of the
+# session's range. That also bounds every scaled value to +/- Z_SPAN.
+MIN_SD_FRACTION = .01
 
 
 def _mean(v):
@@ -80,15 +94,38 @@ def window_features(eda, temp, eda_range, temp_range):
         temp_mean=_mean(t), temp_slope=_slope_per_minute(t), temp_std=_std(t))
 
 
+def signal_scale(values, first, low, high, normalization, window_seconds=WINDOW_SECONDS):
+    """(low, high) for `window_features`. `values` are the session's readings so far, `first` its
+    first minute, and low/high its running range; only the past is used, as in live serving."""
+    if normalization == 'running-minmax':
+        return low, high
+    reference = first
+    if normalization == 'rolling-z':
+        # Everything comes from the recent past, including the range behind the SD floor, so a spike
+        # when the band went on an hour ago, or the choice of start time, stops affecting predictions.
+        recent = values[-(window_seconds + ROLLING_HISTORY_SECONDS):]
+        low, high = min(recent), max(recent)
+        settled = recent[:-window_seconds]
+        if len(settled) >= window_seconds:
+            reference = settled
+    centre = _mean(reference)
+    return centre, centre + Z_SPAN * max(_std(reference), MIN_SD_FRACTION * (high - low))
+
+
 class SignalTracker:
-    """Per-session EDA and skin-temperature history at 1 Hz with a running range."""
-    def __init__(self, window_seconds=WINDOW_SECONDS, min_seconds=MIN_WINDOW_SECONDS):
-        self.window_seconds, self.min_seconds = window_seconds, min_seconds
+    """Per-session EDA and skin-temperature history at 1 Hz with a running range.
+
+    min_eda: a wearable's validity floor in microsiemens. Scaling is relative, so without it the
+    noise of a sensor off the skin is stretched to look like a full-range signal."""
+    def __init__(self, window_seconds=WINDOW_SECONDS, min_seconds=MIN_WINDOW_SECONDS, min_eda=None):
+        self.window_seconds, self.min_seconds, self.min_eda = window_seconds, min_seconds, min_eda
+        self.first = []         # the session's first minute of completed (eda, temp) pairs
         self.bins = {}          # second -> {'eda': [sum, n], 'temp': [sum, n]}
         self.seconds = []       # completed seconds with both signals, ascending
         self.values = {}        # completed second -> (eda, temp)
         self.range = dict(eda=[math.inf, -math.inf], temp=[math.inf, -math.inf])
         self.last_second = None
+        self.retain_seconds = window_seconds + ROLLING_HISTORY_SECONDS
 
     def _complete(self, second):
         both = self.bins.pop(second, {})
@@ -97,10 +134,12 @@ class SignalTracker:
         eda, temp = (both[k][0] / both[k][1] for k in ('eda', 'temp'))
         self.values[second] = (eda, temp)
         self.seconds.append(second)
+        if len(self.first) < self.window_seconds:
+            self.first.append((eda, temp))
         for key, value in (('eda', eda), ('temp', temp)):
             low, high = self.range[key]
             self.range[key] = [min(low, value), max(high, value)]
-        while self.seconds and self.seconds[0] < second - self.window_seconds:
+        while self.seconds and self.seconds[0] < second - self.retain_seconds:
             self.values.pop(self.seconds.pop(0), None)
 
     def add(self, timestamp_ms, eda=None, temp=None):
@@ -117,7 +156,7 @@ class SignalTracker:
                 total[0] += value
                 total[1] += 1
 
-    def features(self, now_ms):
+    def features(self, now_ms, normalization='running-minmax'):
         """Features for the last full window of completed seconds, or None with a reason."""
         now = int(now_ms // 1000)
         recent = [s for s in self.seconds if now - self.window_seconds <= s < now]
@@ -125,7 +164,13 @@ class SignalTracker:
             return None, f'Needs {self.min_seconds} s of EDA and skin temperature in the last {self.window_seconds} s (has {len(recent)} s).'
         eda = [self.values[s][0] for s in recent]
         temp = [self.values[s][1] for s in recent]
-        return window_features(eda, temp, tuple(self.range['eda']), tuple(self.range['temp'])), None
+        if self.min_eda is not None and _mean(eda) < self.min_eda:
+            return None, f'EDA averages {_mean(eda):.3f} µS, below the {self.min_eda} µS validity floor.'
+        done = [s for s in self.seconds if s < now]
+        scales = [signal_scale([self.values[s][index] for s in done], [pair[index] for pair in self.first],
+                               *self.range[key], normalization, self.window_seconds)
+                  for index, key in enumerate(('eda', 'temp'))]
+        return window_features(eda, temp, *scales), None
 
 
 def _f32(value):
@@ -144,10 +189,12 @@ class FrustrationModel:
     def __init__(self, path):
         data = json.loads(Path(path).read_text(encoding='utf-8'))
         if (data.get('schemaVersion') != 1 or data.get('features') != FEATURES or data.get('classes') != CLASSES
-                or data.get('modelType') not in ('logistic', 'tree-ensemble', 'xgboost')):
+                or data.get('modelType') not in ('logistic', 'tree-ensemble', 'xgboost')
+                or data.get('normalization', NORMALIZATIONS[0]) not in NORMALIZATIONS):
             raise ValueError('Unsupported frustration model file.')
         self.data = data
         self.kind = data['modelType']
+        self.normalization = data.get('normalization', NORMALIZATIONS[0])
 
     @staticmethod
     def _walk(tree, x):

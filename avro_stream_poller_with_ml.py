@@ -1,3 +1,11 @@
+"""Legacy Empatica poller: per-minute CSVs to the older biomarker models, served at /latest on port 7001.
+
+Not part of the Team 3 frustration and fatigue dashboard, which uses tools/empatica_bridge.py
+(raw 1 Hz Avro, cleaned signals, the feedback pipeline). This stays because other features read
+its /latest endpoint: the worker-queue view in psychosocial_dashboard.html (through
+live_dashboard_backend.py), worksite_voice_coach.py and speak_biomarker_labels.py. The first and
+last of those expect port 7000, so run them with PORT=7000; the voice coach detects either port.
+"""
 import os
 import time
 from datetime import datetime, timezone, timedelta
@@ -245,7 +253,7 @@ def poll_loop():
     last_sig = None
     last_mods = {}
 
-    print("Polling biomarker CSV updates...")
+    print("Polling biomarker CSV updates for /latest. The Team 3 dashboard does not use this: see tools/empatica_bridge.py.")
 
     while True:
         try:

@@ -6,15 +6,15 @@ condition and Low/Medium/High label in any order) with EDA and skin-temperature 
 
 Two profiles:
 
---profile seen (deployed by team decision): a deep, unregularized XGBoost on heavily
-  overlapping windows, scored with a random window split, so test windows come from
-  participants (and sessions) seen in training. It is the highest-scoring setup, but much
-  of that score is recognizing the person: the report also records its accuracy on
-  unseen people and on deliberately fake per-participant labels.
---profile unseen: models are compared with nested leave-one-participant-out (LOPO)
-  cross-validation; for each held-out person the family and settings are chosen by an
-  inner grouped CV over the remaining people only. Every reported accuracy is on people
-  the model never trained on.
+--profile unseen (deployed): models are compared with nested leave-one-participant-out (LOPO)
+  cross-validation; for each held-out person the normalization, family and settings are chosen
+  by an inner grouped CV over the remaining people only. Every reported accuracy is on people
+  the model never trained on, and the report adds two controls: how well the same setup "learns"
+  fake per-participant labels, and a permutation test of the LOPO score against chance.
+--profile seen (previous model, kept to document its scores): a deep, unregularized XGBoost on
+  heavily overlapping windows, scored with a random window split, so test windows come from
+  participants (and sessions) seen in training. Much of that score is recognizing the person:
+  its report records the accuracy on unseen people and on fake labels.
 
 Features come from pipeline.frustration_model.window_features, the same code the live
 server runs. Participant data stays outside the repository (default: .local/data).
@@ -35,7 +35,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from pipeline.frustration_model import CLASSES, FEATURES, MIN_WINDOW_SECONDS, WINDOW_SECONDS, FrustrationModel, window_features
+from pipeline.frustration_model import (CLASSES, FEATURES, MIN_WINDOW_SECONDS, NORMALIZATIONS, WINDOW_SECONDS,
+                                        FrustrationModel, signal_scale, window_features)
 from training.train_model import atomic_json
 
 HOP_SECONDS = 30
@@ -45,6 +46,12 @@ SEEN_MODEL = ('xgboost', dict(max_depth=6, n_estimators=500, learning_rate=.1, s
 # Two sessions run 30-80 minutes while most last 2-7; cap each so no person dominates.
 SESSION_CAP_SECONDS = 600
 SEED = 0
+# Selection scored baseline-z and rolling-z alike (inner macro-F1 0.622 and 0.612), so this was decided
+# on a test the labels cannot run: on long real recordings, predictions from a first-minute reference
+# change with the session's start time (see docs). Its family and settings still come from inner CV.
+DEPLOY_NORMALIZATION = 'rolling-z'
+FAKE_LABEL_ROUNDS = 10
+PERMUTATION_ROUNDS = 200
 
 
 # ---------------------------------------------------------------- data
@@ -82,8 +89,9 @@ def load_sessions(folder):
     return sessions
 
 
-def build_windows(sessions, window=WINDOW_SECONDS, hop=HOP_SECONDS, cap=SESSION_CAP_SECONDS):
-    """Windows scaled by the running range up to the window end, as the live server does."""
+def build_windows(sessions, window=WINDOW_SECONDS, hop=HOP_SECONDS, cap=SESSION_CAP_SECONDS,
+                  normalization=NORMALIZATIONS[0]):
+    """Windows scaled per wearer from data up to the window end, exactly as the live server does."""
     rows = []
     for s in sessions:
         n = min(len(s['eda']), len(s['temp']), cap)
@@ -95,8 +103,10 @@ def build_windows(sessions, window=WINDOW_SECONDS, hop=HOP_SECONDS, cap=SESSION_
                 if np.isnan(values).mean() > 1 - MIN_WINDOW_SECONDS / window:
                     break
                 history = s[key][:end]
+                history = history[~np.isnan(history)].tolist()
                 filled = np.where(np.isnan(values), np.nanmean(values), values)
-                segment[key] = (filled.tolist(), (float(np.nanmin(history)), float(np.nanmax(history))))
+                segment[key] = (filled.tolist(), signal_scale(history, history[:window], min(history), max(history),
+                                                              normalization, window))
             else:
                 features = window_features(segment['eda'][0], segment['temp'][0], segment['eda'][1], segment['temp'][1])
                 rows.append(dict(features, label=s['label'], participant=s['participant'],
@@ -106,8 +116,13 @@ def build_windows(sessions, window=WINDOW_SECONDS, hop=HOP_SECONDS, cap=SESSION_
 
 # ---------------------------------------------------------------- models
 
-def candidates():
+def candidates(normalizations=NORMALIZATIONS):
     """Small, deliberately regularized grids: few settings means little room to overfit selection."""
+    return [(family, dict(params, normalization=normalization)) for normalization in normalizations
+            for family, params in _family_grid()]
+
+
+def _family_grid():
     out = [('logistic', dict(C=c)) for c in (0.1, 0.3, 1.0)]
     out += [('random-forest', dict(max_depth=d)) for d in (3, 5)]
     out += [('extra-trees', dict(max_depth=d, min_samples_leaf=leaf)) for d in (3, 5) for leaf in (5, 10)]
@@ -120,6 +135,7 @@ def candidates():
 
 
 def make_model(family, params):
+    params = {k: v for k, v in params.items() if k != 'normalization'}
     from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import make_pipeline
@@ -159,12 +175,15 @@ def macro_f1(y, pred):
     return f1_score(y, pred, average='macro', labels=range(len(CLASSES)), zero_division=0)
 
 
-def select(configs, X, y, weights, groups):
-    """Inner grouped CV over the given people only; returns the best config and all scores."""
+def select(configs, tables, y, weights, groups):
+    """Inner grouped CV over the given people only; returns the best config and all scores.
+
+    tables maps each normalization to its feature matrix; every matrix has the same rows."""
     from sklearn.model_selection import GroupKFold
     folds = GroupKFold(n_splits=min(5, len(np.unique(groups))))
     scores = {}
     for family, params in configs:
+        X = tables[params['normalization']]
         pred = np.zeros(len(y), int)
         for train, test in folds.split(X, y, groups):
             pred[test] = fit(family, params, X[train], y[train], weights[train]).predict(X[test])
@@ -203,21 +222,32 @@ def bootstrap_ci(frame, y, pred, rounds=2000):
     return [round(float(np.percentile(stats, 2.5)), 4), round(float(np.percentile(stats, 97.5)), 4)]
 
 
-def nested_lopo(frame, X, y, weights, groups, configs):
-    """Outer LOPO; inner selection per family and across all families from the same inner scores."""
+def nested_lopo(tables, y, weights, groups, configs):
+    """Outer LOPO; inner selection per family, per normalization and overall, from the same inner scores."""
     families = list(dict.fromkeys(f for f, _ in configs))
-    preds = {name: np.zeros(len(y), int) for name in families + ['selected']}
+    normalizations = list(dict.fromkeys(p['normalization'] for _, p in configs))
+    preds = {name: np.zeros(len(y), int) for name in families + normalizations + ['selected']}
     chosen = []
     for person in np.unique(groups):
         train, test = groups != person, groups == person
-        _, scores = select(configs, X[train], y[train], weights[train], groups[train])
+        _, scores = select(configs, {name: table[train] for name, table in tables.items()},
+                           y[train], weights[train], groups[train])
         best_overall = max(scores, key=scores.get)
+        fitted = {}
+
+        def predict(key):
+            if key not in fitted:
+                params = json.loads(key[1])
+                X = tables[params['normalization']]
+                fitted[key] = fit(key[0], params, X[train], y[train], weights[train]).predict(X[test])
+            return fitted[key]
+
         for family in families:
-            key = max((k for k in scores if k[0] == family), key=scores.get)
-            model = fit(key[0], json.loads(key[1]), X[train], y[train], weights[train])
-            preds[family][test] = model.predict(X[test])
-            if key == best_overall:
-                preds['selected'][test] = preds[family][test]
+            preds[family][test] = predict(max((k for k in scores if k[0] == family), key=scores.get))
+        for normalization in normalizations:
+            matching = [k for k in scores if json.loads(k[1])['normalization'] == normalization]
+            preds[normalization][test] = predict(max(matching, key=scores.get))
+        preds['selected'][test] = predict(best_overall)
         chosen.append(dict(heldOut=str(person), family=best_overall[0], params=json.loads(best_overall[1])))
         print(f'  held out {person}: chose {best_overall[0]} {best_overall[1]}', flush=True)
     return preds, chosen
@@ -233,6 +263,60 @@ def baselines(frame, X, y, weights, groups, final):
     for train, test in StratifiedKFold(5, shuffle=True, random_state=SEED).split(X, y):
         leaky[test] = fit(*final, X[train], y[train], weights[train]).predict(X[test])
     return summarize(frame, y, majority), summarize(frame, y, leaky)
+
+
+def fake_labels(frame, rng):
+    """Give each participant a random label drawn from the real per-participant labels."""
+    people = frame['participant'].unique()
+    real = frame.groupby('participant')['label'].agg(lambda v: v.mode()[0])
+    mapping = dict(zip(people, rng.permutation(real[people].to_numpy())))
+    return frame['participant'].map(mapping).map(CLASSES.index).to_numpy()
+
+
+def controls(frame, X, y, weights, groups, final, final_lopo_accuracy):
+    """Does the deployed setup score on labels that carry no information about frustration?
+
+    Fake labels + random split: a high score means it recognizes the person.
+    Fake labels + LOPO (a permutation test): how often chance alone matches the real LOPO score."""
+    from sklearn.model_selection import StratifiedKFold
+    rng = np.random.default_rng(SEED)
+    scores = []
+    for _ in range(FAKE_LABEL_ROUNDS):
+        labels = fake_labels(frame, rng)
+        pred = np.zeros(len(y), int)
+        for train, test in StratifiedKFold(5, shuffle=True, random_state=SEED).split(X, labels):
+            pred[test] = fit(*final, X[train], labels[train], weights[train]).predict(X[test])
+        scores.append(float((pred == labels).mean()))
+    chance = []
+    people = np.unique(groups)
+    for _ in range(PERMUTATION_ROUNDS):
+        labels = fake_labels(frame, rng)
+        pred = np.zeros(len(y), int)
+        for person in people:
+            test = groups == person
+            pred[test] = fit(*final, X[~test], labels[~test], weights[~test]).predict(X[test])
+        chance.append(float((pred == labels).mean()))
+    chance = np.array(chance)
+    return dict(
+        fakeLabelRandomSplitAccuracy=round(float(np.mean(scores)), 4),
+        fakeLabelRandomSplitRange=[round(min(scores), 4), round(max(scores), 4)],
+        permutation=dict(rounds=PERMUTATION_ROUNDS, realLopoAccuracy=round(final_lopo_accuracy, 4),
+                         chanceMean=round(float(chance.mean()), 4),
+                         chance95th=round(float(np.percentile(chance, 95)), 4),
+                         pValue=round(float((1 + (chance >= final_lopo_accuracy).sum()) / (1 + len(chance))), 4)))
+
+
+def previous_model_scores():
+    """The scores of the model this one replaced, shown beside the new ones so nothing is hidden."""
+    try:
+        report = json.loads((ROOT / 'models/team3_frustration_seen_report.json').read_text())
+    except OSError:
+        return None
+    by_name = {e['name']: e['accuracy'] for e in report['evaluations']}
+    return dict(family=report['selectedModel']['family'], params=report['selectedModel']['params'],
+                randomSplitAccuracy=by_name['Random window split (5-fold)'],
+                newPeopleAccuracy=by_name['New people (leave one participant out)'],
+                fakeLabelRandomSplitAccuracy=by_name['Fake labels, random split (control)'])
 
 
 # ---------------------------------------------------------------- export
@@ -300,9 +384,11 @@ def export_checked(family, model, X, meta):
 
 
 def model_meta(frame, sessions, family, params, hop, evaluation):
+    normalization = params.get('normalization', NORMALIZATIONS[0])
     return dict(schemaVersion=1, features=FEATURES, classes=CLASSES, family=family, params=params,
+                normalization=normalization,
                 window=dict(seconds=WINDOW_SECONDS, minSeconds=MIN_WINDOW_SECONDS, hopSeconds=hop,
-                            sessionCapSeconds=SESSION_CAP_SECONDS, scaling='running min-max of the session so far'),
+                            sessionCapSeconds=SESSION_CAP_SECONDS, scaling=normalization),
                 inputs=dict(eda='any unit (scale-free)', temperature='any unit (scale-free)'),
                 training=dict(source='labelled-sessions', participants=int(frame.participant.nunique()),
                               sessions=len(sessions), windows=len(frame),
@@ -388,7 +474,11 @@ def train_seen(args, sessions):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--profile', choices=('seen', 'unseen'), default='seen')
+    parser.add_argument('--profile', choices=('seen', 'unseen'), default='unseen')
+    parser.add_argument('--normalizations', nargs='+', choices=NORMALIZATIONS, default=list(NORMALIZATIONS),
+                        help='Per-wearer scalings the nested selection may choose from')
+    parser.add_argument('--deploy-normalization', choices=NORMALIZATIONS, default=DEPLOY_NORMALIZATION,
+                        help='Scaling of the exported model; the reported accuracy still lets nested selection choose')
     parser.add_argument('--data', type=Path, default=ROOT / '.local/data/Frustration')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--report', type=Path)
@@ -409,17 +499,18 @@ def main(argv=None):
             print(f"  {e['name']:42s} {e['accuracy']:.3f}  ({e['scope']})")
         print(f'Saved {args.output} and {args.report}; export check max gap {gap:.1e}')
         return
-    frame = build_windows(sessions)
-    X = frame[FEATURES].to_numpy(float)
+    frames = {name: build_windows(sessions, normalization=name) for name in args.normalizations}
+    tables = {name: f[FEATURES].to_numpy(float) for name, f in frames.items()}
+    frame = frames[args.normalizations[0]]
     y = frame['label'].map(CLASSES.index).to_numpy()
     groups = frame['participant'].to_numpy()
     weights = 1 / frame.groupby('session')['session'].transform('count').to_numpy(float)
-    configs = candidates()
+    configs = candidates(args.normalizations)
     print(f'{len(sessions)} sessions, {frame.participant.nunique()} participants, {len(frame)} windows '
           f'({dict(frame.label.value_counts())}); {len(configs)} candidate settings', flush=True)
 
     print('Nested leave-one-participant-out evaluation:', flush=True)
-    preds, chosen = nested_lopo(frame, X, y, weights, groups, configs)
+    preds, chosen = nested_lopo(tables, y, weights, groups, configs)
     results = {name: summarize(frame, y, p) for name, p in preds.items()}
     results['selected']['windowAccuracy95CI'] = bootstrap_ci(frame, y, preds['selected'])
     per_person = pd.DataFrame(dict(participant=groups, label=frame['label'], correct=preds['selected'] == y))
@@ -428,11 +519,23 @@ def main(argv=None):
         for pid, rows in per_person.groupby('participant', sort=False)]
 
     print('Final selection on all participants:', flush=True)
-    final, final_scores = select(configs, X, y, weights, groups)
+    deployable = [c for c in configs if c[1]['normalization'] == args.deploy_normalization] or configs
+    final, final_scores = select(deployable, tables, y, weights, groups)
+    _, all_scores = select(configs, tables, y, weights, groups)
+    X = tables[final[1]['normalization']]
     majority, leaky = baselines(frame, X, y, weights, groups, final)
+    # The final settings alone (no outer selection), which is what the permutation test repeats.
+    fixed = np.zeros(len(y), int)
+    for person in np.unique(groups):
+        test = groups == person
+        fixed[test] = fit(*final, X[~test], y[~test], weights[~test]).predict(X[test])
+    print(f'Controls ({FAKE_LABEL_ROUNDS} fake-label rounds, {PERMUTATION_ROUNDS} permutations):', flush=True)
+    control = controls(frame, X, y, weights, groups, final, float((fixed == y).mean()))
+    previous = previous_model_scores()
     model = fit(*final, X, y, weights)
     meta = model_meta(frame, sessions, final[0], final[1], HOP_SECONDS, dict(
-        method='nested leave-one-participant-out', scope='unseen participants', metrics=results['selected'],
+        method='nested leave-one-participant-out', scope='new people', metrics=results['selected'],
+        deployedNormalizationAccuracy=results.get(final[1]['normalization'], {}).get('windowAccuracy'),
         majorityBaseline=majority['windowAccuracy'], randomSplitAccuracy=leaky['windowAccuracy']))
     exported, gap = export_checked(final[0], model, X, meta)
 
@@ -440,22 +543,26 @@ def main(argv=None):
                   selectedModel=dict(family=final[0], params=final[1], exportCheckMaxGap=gap),
                   nestedLopo=results, outerFoldChoices=chosen,
                   baselines=dict(majorityClassLopo=majority, randomWindowSplitLeaky=leaky),
-                  finalSelectionInnerMacroF1={f'{k[0]} {k[1]}': round(float(v), 4) for k, v in final_scores.items()})
+                  controls=control, previousModel=previous,
+                  finalSelectionInnerMacroF1={f'{k[0]} {k[1]}': round(float(v), 4) for k, v in all_scores.items()})
     args.output.parent.mkdir(parents=True, exist_ok=True)
     atomic_json(args.output, exported, indent=None)
     atomic_json(args.report, report)
 
     print('\nResults on unseen participants (nested LOPO):')
     print(f"  {'model':16s} accuracy  macro-F1  session-vote  recall low/med/high")
-    for name in [*dict.fromkeys(f for f, _ in configs), 'selected']:
+    for name in [*dict.fromkeys(f for f, _ in configs), *args.normalizations, 'selected']:
         r = results[name]
         recall = '/'.join(f"{r['recall'][c]:.2f}" for c in CLASSES)
         print(f"  {name:16s}  {r['windowAccuracy']:.3f}    {r['macroF1']:.3f}      {r['sessionVoteAccuracy']:.3f}      {recall}")
     ci = results['selected']['windowAccuracy95CI']
     print(f"  majority class    {majority['windowAccuracy']:.3f}")
-    print(f"\nSelected for deployment: {final[0]} {final[1]}; nested LOPO accuracy "
+    print(f"\nDeployed: {final[0]} {final[1]}; nested LOPO accuracy with the scaling also selected "
           f"{results['selected']['windowAccuracy']:.3f} (95% CI {ci[0]:.3f}-{ci[1]:.3f})")
     print(f"Random window split (leaky, for comparison only): {leaky['windowAccuracy']:.3f}")
+    print(f"Fake labels, random split (control): {control['fakeLabelRandomSplitAccuracy']:.3f}")
+    print(f"Permutation test: chance mean {control['permutation']['chanceMean']:.3f}, 95th percentile "
+          f"{control['permutation']['chance95th']:.3f}, p = {control['permutation']['pValue']}")
     print(f'Saved {args.output} and {args.report}; export check max gap {gap:.1e}')
 
 

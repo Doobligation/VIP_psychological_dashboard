@@ -1,6 +1,8 @@
 """Rolling raw HRV/SCR and native browser snapshot feature extraction."""
+from collections import deque
 from copy import deepcopy
 import math
+from statistics import median
 from .config import LEGACY_FEATURE_POLICY, load_config, validate_feature_policy
 from .ingest import finite
 
@@ -24,6 +26,21 @@ def calculate_hrv(rr_intervals_ms, rr_min_ms=300, rr_max_ms=2000):
                 sdnn=math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1)) if len(values) >= 2 else None)
 
 
+def clean_beats(intervals, tolerance=.2, neighbours=5):
+    """Flag each beat interval as usable: within `tolerance` of the median of the `neighbours`
+    intervals on each side. Wrist PPG misses beats (one interval reads about double) and picks up
+    noise peaks, and both pass a 300-2000 ms range check. Too few neighbours means not usable."""
+    flags = []
+    for i, value in enumerate(intervals):
+        around = intervals[max(0, i - neighbours):i] + intervals[i + 1:i + 1 + neighbours]
+        if len(around) < 3:
+            flags.append(False)
+            continue
+        centre = median(around)
+        flags.append(abs(value - centre) <= tolerance * centre)
+    return flags
+
+
 def scr_per_minute(points, min_amplitude_us=SCR_MIN_AMPLITUDE_US):
     """SCR frequency from (time_ms, eda_us) points: rises of at least the minimum amplitude
     from the preceding trough, counted once the signal turns down, per minute of coverage."""
@@ -44,9 +61,17 @@ def scr_per_minute(points, min_amplitude_us=SCR_MIN_AMPLITUDE_US):
 
 
 class FeaturePipeline:
-    """One sensor session. Raw mode automatically records an initial resting baseline."""
-    def __init__(self, rules=None):
-        self.policy = load_config(rules, 'rules.json')['featurePolicy']
+    """One sensor session. Raw mode automatically records an initial resting baseline.
+
+    A source policy (config/rules.json sourcePolicies) replaces that for noisy wearables: beats
+    are artifact-cleaned, EDA has a validity floor, and the baseline is the wearer's own recent
+    median instead of one window at the start of the session."""
+    def __init__(self, rules=None, source_policy=None):
+        self.source_policy = source_policy
+        self.policy = source_policy['featurePolicy'] if source_policy else load_config(rules, 'rules.json')['featurePolicy']
+        self.history = deque()  # (time, measured signals) for each second with a full window
+        self.baseline_at = None
+        self.last_seen = None
         self.hr, self.rr = [], []
         self.baseline = None
         self.start = None
@@ -57,7 +82,8 @@ class FeaturePipeline:
     def process(self, sample):
         snapshot = sample.get('snapshot')
         if snapshot is None:
-            snapshot = self._raw_snapshot(sample['raw'], sample['timestamp_ms'])
+            build = self._source_snapshot if self.source_policy else self._raw_snapshot
+            snapshot = build(sample['raw'], sample['timestamp_ms'])
         return self.from_snapshot(snapshot)
 
     def from_snapshot(self, snapshot):
@@ -159,3 +185,85 @@ class FeaturePipeline:
                 self.baseline['scr'] = scr
         return dict(**metrics, eda=eda_mean, scr=scr, edaFresh=bool(eda_fresh), fresh=fresh, featurePolicy=deepcopy(p), baseline=deepcopy(self.baseline), baselineState='ready' if self.baseline else 'collecting',
                     rrCount=len(self.rr), windowSeconds=coverage / 1000, requiredWindowSeconds=p['windowSeconds'])
+
+    def _rolling_baseline(self, now, measured):
+        """Median of the wearer's own recent values. Windows ending inside the gap overlap the
+        current window and are skipped, so a change cannot pull its own reference towards it."""
+        q = self.source_policy
+        if measured is not None:
+            self.history.append((now, measured))
+        oldest = now - (q['baselineHistorySeconds'] + q['baselineGapSeconds']) * 1000
+        while self.history and self.history[0][0] < oldest:
+            self.history.popleft()
+        if self.baseline_at is not None and now - self.baseline_at < 10000:
+            return  # recomputed every 10 s; it moves slowly by design
+        self.baseline_at = now
+        settled = [values for t, values in self.history if t <= now - q['baselineGapSeconds'] * 1000]
+        baseline = {}
+        for key in ('hr', 'rmssd', 'sdnn', 'eda', 'scr'):
+            seen = [values[key] for values in settled if values[key] is not None]
+            if len(seen) >= q['baselineMinSeconds']:
+                baseline[key] = median(seen)
+        if 'scr' in baseline:
+            # Often no responses per minute at rest, which cannot anchor a percentage. One response
+            # per window is the smallest rate the window can measure, so it is the reference floor.
+            baseline['scr'] = max(baseline['scr'], q['scrFloorPerMinute'])
+        self.baseline = baseline or None
+
+    def _source_snapshot(self, raw, now):
+        p, q = self.policy, self.source_policy
+        window_ms, fresh_ms = p['windowSeconds'] * 1000, p['freshSeconds'] * 1000
+        worn = raw.get('contact') is not False
+        if not worn or (self.last_seen is not None and now - self.last_seen > fresh_ms):
+            self._clear()
+        self.last_seen = now
+        if not worn:
+            self._rolling_baseline(now, None)
+            return dict(fresh=False, worn=False, featurePolicy=deepcopy(p), baseline=deepcopy(self.baseline),
+                        baselineState='ready' if self.baseline else 'collecting')
+        if self.start is None:
+            self.start = now
+        # A small negative EDA offset stays in the mean; the floor below decides validity.
+        if finite(raw.get('eda_us')):
+            self.eda.append((now, raw['eda_us']))
+        for rr in raw.get('rr_intervals_ms', []):
+            if p['rrMinMs'] <= rr <= p['rrMaxMs']:
+                self.rr.append((now, rr, self.sequence))
+            else:
+                self.sequence += 1
+        self.eda = [point for point in self.eda if point[0] > now - window_ms]
+        self.rr = [beat for beat in self.rr if beat[0] > now - window_ms]
+        coverage = min(now - self.start, window_ms)
+        full = coverage >= window_ms - fresh_ms
+
+        values = [value for _, value, _ in self.rr]
+        keep = clean_beats(values, q['beatTolerance'], q['beatNeighbours'])
+        clean = [value for value, kept in zip(values, keep) if kept]
+        fraction = len(clean) / len(values) if values else 0
+        # A rejected beat breaks successive differences, the same as a gap in the sequence.
+        series, sequence = [], None
+        for (_, value, seq), kept in zip(self.rr, keep):
+            if sequence is not None and seq != sequence:
+                series.append(None)
+            series.append(value if kept else None)
+            sequence = seq
+        metrics = calculate_hrv(series, p['rrMinMs'], p['rrMaxMs'])
+        hrv_usable = fraction >= q['minCleanBeatFraction'] and len(clean) >= p['minRr']
+        if not hrv_usable:
+            metrics.update(rmssd=None, sdnn=None)
+        metrics['hr'] = 60000 / (sum(clean) / len(clean)) if clean else None
+
+        enough_eda = len(self.eda) >= p['windowSeconds'] - p['freshSeconds']
+        eda_mean = sum(value for _, value in self.eda) / len(self.eda) if enough_eda else None
+        eda_below_floor = eda_mean is not None and eda_mean < q['edaFloorUs']
+        if eda_below_floor:
+            eda_mean = None
+        scr = scr_per_minute(self.eda) if eda_mean is not None else None
+
+        measured = dict(metrics, eda=eda_mean, scr=scr) if full else None
+        self._rolling_baseline(now, measured)
+        return dict(**metrics, eda=eda_mean, scr=scr, edaFresh=eda_mean is not None, edaBelowFloor=eda_below_floor,
+                    fresh=True, worn=True, cleanBeatFraction=round(fraction, 3), hrvUsable=hrv_usable,
+                    featurePolicy=deepcopy(p), baseline=deepcopy(self.baseline),
+                    baselineState='ready' if self.baseline else 'collecting',
+                    rrCount=len(values), windowSeconds=coverage / 1000, requiredWindowSeconds=p['windowSeconds'])

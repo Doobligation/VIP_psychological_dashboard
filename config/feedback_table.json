@@ -1,15 +1,17 @@
 {
   "schemaVersion": 2,
-  "version": "team3-feedback-2026-10-29-ml",
+  "version": "team3-feedback-2026-11-04-quality",
   "source": "DBR masterfile: frustration sheet Level 3 (High Frustration) rows; stress sheet Fatigue-Related Stress Level 3 row.",
   "implementationChoices": [
     "Assignment rule: only High risk issues feedback, and only after consecutiveHighPredictions consecutive High predictions. A Low or Medium prediction resets the count.",
     "Unavailable predictions (missing signals) and observation gaps longer than freshSeconds also reset the count, because consecutiveness cannot be confirmed across them.",
     "After feedback is issued the count restarts, so every alert is backed by its own run of consecutive High predictions.",
     "Cooldown and the warning cap are alarm-fatigue limits from the pathway document; their values are provisional study settings.",
+    "sameCueRepeatSeconds stops an identical message repeating while the same state stays High. It only ever removes cues, so the 3-consecutive-High rule still holds; the value is a provisional study setting.",
     "When the ML model predicts High frustration but the DBR cause rules lack EDA, SCR, HR, RMSSD or SDNN evidence, the cause is \"unspecified\" and a general message (adapted from the DBR Level 3 rows, not a DBR row itself) is used."
   ],
   "decision": {
+    "sameCueRepeatSeconds": 900,
     "freshSeconds": 5,
     "consecutiveHighPredictions": 3,
     "cooldownSeconds": 120,

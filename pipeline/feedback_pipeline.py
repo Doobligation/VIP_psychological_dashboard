@@ -10,6 +10,7 @@ from .decision import DecisionEngine
 from .frustration_model import FrustrationModel, SignalTracker
 
 STATES = ('frustration', 'fatigue', 'posture')
+NOT_WORN = 'Device not worn (Empatica wear detection or skin temperature), so nothing is predicted from this data.'
 
 
 class FeedbackPipeline:
@@ -34,7 +35,7 @@ class FeedbackPipeline:
         if model is None:
             rule['model'] = dict(status='disabled', reason=self.frustration_model_reason)
             return rule
-        features, waiting = signals.features(now)
+        features, waiting = signals.features(now, model.normalization)
         if features is None:
             rule['model'] = dict(status='waiting', reason=f'{waiting} Rules decide the level meanwhile.')
             return rule
@@ -42,13 +43,25 @@ class FeedbackPipeline:
         band = next(b for b in self.rules['probabilityBands'] if b['level'] == level)
         labels = {k: v.get('label', k) for k, v in self.rules['states']['frustration'].get('causes', {}).items()}
         cause = rule['cause'] if rule['available'] and rule['cause'] else 'unspecified'
+        match, closest = ('exact' if cause != 'unspecified' else None), None
+        if match:
+            cause_note = f"Rule pattern: {rule['reason']}"
+        elif rule['available']:
+            closest = self.rule_engine.closest_cause(rule['evidence'])
+            if closest:
+                cause, match = closest['cause'], 'closest'
+                cause_note = (f"Closest DBR pattern: {closest['label']}, {closest['agreeing']} of {closest['total']} signals "
+                              'agree (not an exact match).')
+            else:
+                cause_note = 'All five signals were measured, but too few agree with any DBR cause pattern.'
+        else:
+            cause_note = f"Cause not assessed: {rule['reason']}"
         evaluation = model.data.get('evaluation', {})
         out = dict(rule, available=True, level=level, severity=band['severity'], score=probabilities[level],
                    score_kind='ml-probability', cause=cause, causeLabel=labels.get(cause, cause),
                    alternatives=rule.get('alternatives', []) if cause == rule['cause'] else [],
-                   reason=(f"ML model predicts {level} frustration ({probabilities[level]:.0%}). "
-                           + (f"Rule pattern: {rule['reason']}" if cause != 'unspecified'
-                              else 'Cause needs EDA, SCR, HR, RMSSD and SDNN baseline changes.')))
+                   causeAssessed=rule['available'], causeMatch=match, causeAgreement=closest,
+                   reason=f"ML model predicts {level} frustration ({probabilities[level]:.0%}). {cause_note}")
         out['model'] = dict(status='ml', family=model.data.get('family'), probabilities=probabilities,
                             ruleLevel=rule['level'], features=features,
                             accuracy=evaluation.get('metrics', {}).get('windowAccuracy'),
@@ -68,12 +81,60 @@ class FeedbackPipeline:
             return
         self.sessions[session_id]['decisions'].restore_alert_history(alerts)
 
+    def _new_session(self, sample):
+        raw = sample.get('raw') if isinstance(sample.get('raw'), dict) else {}
+        policy = self.rules.get('sourcePolicies', {}).get(raw.get('source'))
+        return dict(features=FeaturePipeline(self.rules, policy), decisions=DecisionEngine(self.feedback),
+                    participant=sample['participant'], mode=sample['mode'], last=None, result=None, seen=OrderedDict(),
+                    signals=SignalTracker(min_eda=policy['edaFloorUs'] if policy else None),
+                    policy=policy, predicted=None, held={})
+
+    def _decide(self, state, features, sample, now, worn):
+        """Evaluate every state, at the source's prediction cadence when it has one.
+
+        A rolling window advanced one second overlaps the last by 98%, so at 1 Hz "3 consecutive
+        Highs" would mean 3 seconds of nearly the same data. Between predictions the last result
+        is held; losing wear contact is reported at once and breaks the run."""
+        policy = state['policy']
+        cadence = policy['predictionSeconds'] * 1000 if policy else None
+        due = cadence is None or state['predicted'] is None or now - state['predicted'] >= cadence
+        if not due and worn and state['held']:
+            decisions = deepcopy(state['held'])
+            for decision in decisions.values():
+                decision.pop('wouldAlert', None)
+                decision.update(alert=None, prediction=False)
+            return decisions
+        max_gap = cadence + self.feedback['decision']['freshSeconds'] * 1000 if cadence else None
+        decisions = {}
+        for name in STATES:
+            rule = self.rule_engine.evaluate(features, name)
+            if name == 'frustration':
+                # The window still holds a minute of earlier data, which no longer describes the wearer.
+                rule = self._frustration(rule, state['signals'], now) if worn else dict(rule, model=dict(status='waiting', reason=NOT_WORN))
+            elif name == 'fatigue':
+                if self.rule_only:
+                    rule['model'] = dict(status='disabled', reason='Rule-based fatigue assessment from the fatigue document; no ML model is used.')
+                else:
+                    rule = self.model.apply(rule, features, sample['mode'])
+            if not worn:
+                rule['reason'] = NOT_WORN
+            decisions[name] = state['decisions'].update(rule, now, deliver=sample['mode'] != 'batch', max_gap_ms=max_gap)
+        if policy:
+            # The wait for the first full window is not a prediction, whatever it reports.
+            counted = due and (state['predicted'] is not None or any(d['available'] for d in decisions.values()))
+            if counted:
+                state['predicted'] = now
+            for decision in decisions.values():
+                decision['prediction'] = counted
+            state['held'] = deepcopy(decisions)
+        return decisions
+
     def process(self, sample):
         sample = validate_sample(sample)
         session_id, sample_id, now = sample['session_id'], sample['sample_id'], sample['timestamp_ms']
-        state = self.sessions.setdefault(session_id, dict(features=FeaturePipeline(self.rules), decisions=DecisionEngine(self.feedback),
-            participant=sample['participant'], mode=sample['mode'], last=None, result=None, seen=OrderedDict(),
-            signals=SignalTracker()))
+        state = self.sessions.get(session_id)
+        if state is None:
+            state = self.sessions[session_id] = self._new_session(sample)
         if state['participant'] != sample['participant'] or state['mode'] != sample['mode']:
             raise ValueError('Participant and mode cannot change within a session.')
         if sample_id in state['seen'] or (state['last'] is not None and now <= state['last']):
@@ -88,19 +149,11 @@ class FeedbackPipeline:
         features = state['features'].process(sample)
         raw = sample.get('raw') if isinstance(sample.get('raw'), dict) else {}
         eda, temp = raw.get('eda_us'), raw.get('temp_c')
-        if finite(eda) or finite(temp):
+        # Data from a device off the wrist must not reach the model or stretch its scaling.
+        worn = raw.get('contact') is not False
+        if worn and (finite(eda) or finite(temp)):
             state['signals'].add(now, eda, temp)
-        decisions = {}
-        for name in STATES:
-            rule = self.rule_engine.evaluate(features, name)
-            if name == 'frustration':
-                rule = self._frustration(rule, state['signals'], now)
-            elif name == 'fatigue':
-                if self.rule_only:
-                    rule['model'] = dict(status='disabled', reason='Rule-based fatigue assessment from the fatigue document; no ML model is used.')
-                else:
-                    rule = self.model.apply(rule, features, sample['mode'])
-            decisions[name] = state['decisions'].update(rule, now, deliver=sample['mode'] != 'batch')
+        decisions = self._decide(state, features, sample, now, worn)
         result = dict(session_id=session_id, sample_id=sample_id, timestamp_ms=now, mode=sample['mode'],
                       features=features, states=decisions, alerts=[d['alert'] for d in decisions.values() if d['alert']])
         state['last'] = now

@@ -24,8 +24,9 @@ from pipeline.feedback_pipeline import STATES
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / '.local' / 'closed_loop.sqlite3'
 MAX_JSON_BYTES = 1_000_000
-ROUTES = {'/samples', '/latest', '/decision', '/context', '/feedback', '/summary', '/export', '/history'}
+ROUTES = {'/samples', '/latest', '/decision', '/context', '/feedback', '/summary', '/export', '/history', '/sessions', '/cues'}
 MAX_HISTORY = 2000
+MAX_SESSIONS = 200
 
 
 def identifier(value, name):
@@ -232,15 +233,15 @@ class ClosedLoopService:
             self.store.save_feedback(record)
             return record
 
-    def history(self, session_id, limit=60):
-        """Compact decisions for the most recent readings; the full export is far larger."""
+    def history(self, session_id, limit=60, after=None):
+        """Compact decisions for the most recent readings, or those after a time; the full export is far larger."""
         identifier(session_id, 'session_id')
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_HISTORY:
             raise ValueError(f'limit must be an integer from 1 to {MAX_HISTORY}.')
-        keep = ('state', 'available', 'level', 'cause', 'causeLabel', 'reason', 'alternatives', 'streak',
-                'suppression', 'alert', 'wouldAlert')
+        keep = ('state', 'available', 'level', 'cause', 'causeLabel', 'causeMatch', 'causeAgreement', 'causeAssessed',
+                'reason', 'alternatives', 'streak', 'suppression', 'alert', 'wouldAlert', 'prediction')
         with self.lock:
-            rows = self.store.recent(session_id, limit)
+            rows = self.store.recent(session_id, limit) if after is None else self.store.newer(session_id, after, limit)
         out = []
         for row in rows:
             result = json.loads(row['result_json'])
@@ -253,9 +254,31 @@ class ClosedLoopService:
             features = result.get('features', {})
             snapshot = features.get('snapshot') if isinstance(features.get('snapshot'), dict) else {}
             compact = {k: v for k, v in features.items() if k.endswith('ChangePct')}
-            compact['snapshot'] = {k: snapshot.get(k) for k in ('hr', 'rmssd', 'sdnn', 'eda', 'scr', 'baseline')}
+            compact['snapshot'] = {k: snapshot.get(k) for k in ('hr', 'rmssd', 'sdnn', 'eda', 'scr', 'baseline', 'worn',
+                                                                'cleanBeatFraction', 'hrvUsable', 'edaBelowFloor')}
             out.append(dict(reading_id=result.get('reading_id'), session_id=session_id, timestamp_ms=row['timestamp_ms'],
                             mode=result.get('mode'), states=states, alerts=result.get('alerts', []), features=compact, stale=False))
+        return out
+
+    def sessions(self, limit=50):
+        """Saved sessions for the dashboard's picker. Local-only, like every route here."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_SESSIONS:
+            raise ValueError(f'limit must be an integer from 1 to {MAX_SESSIONS}.')
+        with self.lock:
+            return self.store.sessions(limit)
+
+    def cues(self, session_id):
+        """Every cue in a session, oldest first: delivered, or recorded as would-be for late data."""
+        identifier(session_id, 'session_id')
+        with self.lock:
+            rows = self.store.cue_rows(session_id)
+        out = []
+        for row in rows:
+            for state in json.loads(row['result_json']).get('states', {}).values():
+                cue, delivered = state.get('alert') or state.get('wouldAlert'), bool(state.get('alert'))
+                if cue:
+                    out.append(dict(time=row['timestamp_ms'], delivered=delivered,
+                                    **{k: cue.get(k) for k in ('id', 'state', 'cause', 'causeLabel', 'causeMatch', 'message', 'consecutive')}))
         return out
 
     def summary(self, session_id):
@@ -367,15 +390,23 @@ class FeedbackAPIMixin:
                 result = handler(payload)
             else:
                 query = parse_qs(parsed.query)
+                limits = query.get('limit', ['60' if parsed.path == '/history' else '50'])
+                if parsed.path in ('/history', '/sessions') and (len(limits) != 1 or not limits[0].isdigit()):
+                    raise ValueError('limit must be a positive integer.')
+                if parsed.path == '/sessions':
+                    self._feedback_json(service.sessions(int(limits[0])))
+                    return True
                 sessions = query.get('session_id', [])
                 if len(sessions) != 1: raise ValueError('Exactly one session_id is required.')
                 session_id = identifier(sessions[0], 'session_id')
                 if parsed.path == '/history':
-                    limits = query.get('limit', ['60'])
-                    if len(limits) != 1 or not limits[0].isdigit(): raise ValueError('limit must be a positive integer.')
-                    result = service.history(session_id, int(limits[0]))
+                    afters = query.get('after', [])
+                    if len(afters) > 1: raise ValueError('after may be given once.')
+                    after = float(afters[0]) if afters else None
+                    if after is not None and not math.isfinite(after): raise ValueError('after must be a finite time.')
+                    result = service.history(session_id, int(limits[0]), after)
                 else:
-                    handler = {'/latest':service.latest,'/decision':service.latest,'/context':service.context,'/summary':service.summary,'/export':service.export}[parsed.path]
+                    handler = {'/latest':service.latest,'/decision':service.latest,'/context':service.context,'/summary':service.summary,'/export':service.export,'/cues':service.cues}[parsed.path]
                     result = handler(session_id)
             self._feedback_json(result)
         except (ValueError, TypeError, KeyError, OverflowError, RecursionError, UnicodeDecodeError) as exc:

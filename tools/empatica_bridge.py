@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Feed EmbracePlus raw data from the study's AWS S3 bucket into the feedback pipeline.
 
-Empatica uploads raw Avro files in 30-minute chunks, so this data is 30-60 minutes late.
-Frustration features are scaled by the range seen since the session started, so give each
-experiment session its own --since/--until and --session-id; one session per day drifts.
-Each new file becomes one sample per second (mean EDA, skin temperature, and beat
+Empatica uploads raw Avro files in 30-minute chunks, so this data usually arrives 30-60 minutes
+late and sometimes hours late. Give each experiment session its own --since/--until and
+--session-id. Each new file becomes one sample per second (mean EDA, skin temperature, and beat
 intervals from Empatica's systolic peaks) posted in mode "batch": levels, causes and High
 streaks are computed and saved, and any feedback live data would have triggered is
-recorded as `wouldAlert` instead of being delivered.
+recorded as `wouldAlert` instead of being delivered. Seconds when the device was not worn are
+flagged, and nothing is predicted from them.
+
+  # What is on S3 for a date? (Enrollment names are typed per session and can change between days.)
+  python3 tools/empatica_bridge.py --list --date 2026-11-01
 
   # Pull new files every minute and send them to the running dashboard server:
   python3 tools/empatica_bridge.py --url http://127.0.0.1:8000 --participant 11 --poll 60
@@ -26,12 +29,14 @@ environment or .env, and the bucket/prefix of avro_stream_poller_with_ml.py.
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime, timedelta, timezone
 import io
 import json
 import os
 from pathlib import Path
 import re
+from statistics import median
 import sys
 import time
 import urllib.error
@@ -47,6 +52,7 @@ LOCAL_DIR = ROOT / '.local/data/participant_data'
 STATE_FILE = ROOT / '.local/empatica_bridge_state.json'
 RR_MIN_MS, RR_MAX_MS = 300, 2000
 HR_MAX_AGE_S = 5
+MINUTE_CSVS = 'digital_biomarkers/aggregated_per_minute'
 
 
 # ---------------------------------------------------------------- sources
@@ -56,11 +62,17 @@ class LocalSource:
     def __init__(self, root):
         self.root = Path(root)
 
-    def keys(self, date):
-        return sorted(str(p.relative_to(self.root)) for p in (self.root / date).glob('*/raw_data/v6/*.avro'))
+    def everything(self, date):
+        return sorted(str(p.relative_to(self.root)) for p in (self.root / date).glob('*/**/*') if p.is_file())
 
     def read(self, key):
         return (self.root / key).read_bytes()
+
+    def read_optional(self, key):
+        try:
+            return self.read(key)
+        except OSError:
+            return None
 
 
 class S3Source:
@@ -74,21 +86,62 @@ class S3Source:
         self.bucket, self.prefix = bucket, prefix
         self.s3 = boto3.client('s3', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
 
-    def keys(self, date):
+    def everything(self, date):
         keys, token = [], None
         while True:
             args = dict(Bucket=self.bucket, Prefix=f'{self.prefix}{date}/')
             if token:
                 args['ContinuationToken'] = token
             response = self.s3.list_objects_v2(**args)
-            keys += [o['Key'][len(self.prefix):] for o in response.get('Contents', [])
-                     if '/raw_data/v6/' in o['Key'] and o['Key'].endswith('.avro')]
+            keys += [o['Key'][len(self.prefix):] for o in response.get('Contents', [])]
             if not response.get('IsTruncated'):
                 return sorted(keys)
             token = response['NextContinuationToken']
 
     def read(self, key):
         return self.s3.get_object(Bucket=self.bucket, Key=self.prefix + key)['Body'].read()
+
+    def read_optional(self, key):
+        try:
+            return self.read(key)
+        except self.s3.exceptions.NoSuchKey:
+            return None
+
+
+def is_raw(key):
+    return '/raw_data/v6/' in key and key.endswith('.avro')
+
+
+def raw_keys(source, date):
+    return [key for key in source.everything(date) if is_raw(key)]
+
+
+def availability(source, date):
+    """{enrollment: (Avro files, per-minute CSV files)} for one UTC date folder."""
+    found = {}
+    for key in source.everything(date):
+        files = found.setdefault(enrollment_of(key), [0, 0])
+        files[0] += is_raw(key)
+        files[1] += f'/{MINUTE_CSVS}/' in key and key.endswith('.csv')
+    return {name: tuple(files) for name, files in sorted(found.items())}
+
+
+def explain_empty(source, dates, participant):
+    """Say why nothing was processed; "no new files" alone reads as if the data did not exist."""
+    lines = []
+    for date in dates:
+        found = availability(source, date)
+        if participant and participant not in found:
+            others = ', '.join(f'{name} ({avro} Avro)' for name, (avro, _) in found.items()) or 'nobody'
+            lines.append(f'{date}: no enrollment named {participant}. On that date: {others}.')
+        elif participant and not found[participant][0]:
+            lines.append(f'{date}: {participant} has {found[participant][1]} per-minute CSVs but no raw Avro yet. '
+                         'Avro uploads can lag by hours; keep polling. Per-minute CSVs cannot feed the 60 s features.')
+        elif not found:
+            lines.append(f'{date}: nothing on the source for this date.')
+        else:
+            lines.append(f"{date}: no new files for {participant or 'any enrollment'} (already sent, or outside --since/--until).")
+    return '\n'.join(lines)
 
 
 def enrollment_of(key):
@@ -152,6 +205,35 @@ def avro_to_samples(data):
             yield second, raw, tz
 
 
+class WearCheck:
+    """Was the device worn? Empatica's per-minute flag where published, else skin temperature.
+
+    The flag can lag the raw files, so temperature decides until it appears. Evidence for each
+    threshold is in docs/TEAM3_FRUSTRATION_FATIGUE.md."""
+    def __init__(self, source, policy):
+        self.source, self.policy, self.tables = source, policy, {}
+
+    def _table(self, key, second):
+        """{minute: percent worn} from the wear CSV of this sample's UTC date."""
+        day = datetime.fromtimestamp(second, timezone.utc).strftime('%Y-%m-%d')
+        folder, stem = key.split('/')[1], Path(key).stem.rsplit('_', 1)[0]
+        name = f'{day}/{folder}/{MINUTE_CSVS}/{stem}_{day}_wearing-detection.csv'
+        if name not in self.tables:
+            table, data = {}, self.source.read_optional(name)
+            for row in csv.DictReader(io.StringIO(data.decode())) if data else ():
+                value = (row.get('wearing_detection_percentage') or '').strip()
+                if value:
+                    table[int(row['timestamp_unix']) // 60000] = float(value)
+            self.tables[name] = table
+        return self.tables[name]
+
+    def worn(self, key, second, minute_temperature):
+        percent = self._table(key, second).get(second // 60)
+        if percent is not None:
+            return percent >= self.policy['minPercent']
+        return minute_temperature is None or minute_temperature >= self.policy['minTemperatureC']
+
+
 # ---------------------------------------------------------------- delivery
 
 class Replay:
@@ -180,14 +262,20 @@ def post(url, sample):
         return json.load(response)
 
 
-def process_file(source, key, send, session_id=None, quiet=False, window=(None, None), sent_until=None, replay=None):
-    """Send one file's samples in order; returns the number of samples and would-be cues.
+def process_file(source, key, send, session_id=None, quiet=False, window=(None, None), sent_until=None, replay=None,
+                 wear=None):
+    """Send one file's samples in order; returns samples sent, would-be cues and seconds not worn.
 
     sent_until maps session -> last second sent; consecutive files overlap by about a second."""
     enrollment = enrollment_of(key)
     sent_until = {} if sent_until is None else sent_until
-    sent, cues, minute, last = 0, [], None, None
-    for second, raw, tz in avro_to_samples(source.read(key)):
+    sent, cues, minute, last, not_worn = 0, [], None, None, 0
+    samples = list(avro_to_samples(source.read(key)))
+    temperatures = {}
+    for second, raw, _ in samples:
+        if 'temp_c' in raw:
+            temperatures.setdefault(second // 60, []).append(raw['temp_c'])
+    for second, raw, tz in samples:
         if (window[0] is not None and second < window[0]) or (window[1] is not None and second > window[1]):
             continue
         day = datetime.fromtimestamp(second, timezone.utc).strftime('%Y-%m-%d')
@@ -195,9 +283,13 @@ def process_file(source, key, send, session_id=None, quiet=False, window=(None, 
         if second <= sent_until.get(session, -1):
             continue
         sent_until[session] = second
+        raw = dict(raw, source='empatica-avro')
+        minute_temperatures = temperatures.get(second // 60)
+        if wear and not wear.worn(key, second, median(minute_temperatures) if minute_temperatures else None):
+            raw['contact'] = False
+            not_worn += 1
         sample = dict(session_id=session, participant=f'empatica-{enrollment}',
-                      mode='batch', sample_id=f'{Path(key).stem}-{second}', timestamp_ms=second * 1000,
-                      raw=dict(raw, source='empatica-avro'))
+                      mode='batch', sample_id=f'{Path(key).stem}-{second}', timestamp_ms=second * 1000, raw=raw)
         if replay:
             replay(second, sample)
         result = send(sample)
@@ -213,7 +305,7 @@ def process_file(source, key, send, session_id=None, quiet=False, window=(None, 
             print('  ' + _summary(second, tz, result))
     if not quiet and last:
         print('  ' + _summary(*last))
-    return sent, cues
+    return sent, cues, not_worn
 
 
 def _clock(second, tz):
@@ -240,24 +332,46 @@ def load_state(path):
 
 
 def run(source, dates, send, participant=None, since=None, state=None, session_id=None, quiet=False, until=None,
-        replay=None):
+        replay=None, wear_policy=None):
     """Process every not-yet-sent file for the dates, oldest first. Returns per-file results."""
     state = state if state is not None else dict(done=[])
     state.setdefault('sentUntil', {})
     done = set(state['done'])
     results = []
+    if wear_policy is None:
+        from pipeline.config import load_config
+        wear_policy = load_config(None, 'rules.json')['sourcePolicies']['empatica-avro']['wear']
+    wear = WearCheck(source, wear_policy)  # rebuilt each pass: the published flag grows through the day
     for date in dates:
-        keys = [k for k in source.keys(date) if k not in done
+        keys = [k for k in raw_keys(source, date) if k not in done
                 and (participant is None or enrollment_of(k) == participant)
                 and (since is None or file_start(k) + 1800 >= since)
                 and (until is None or file_start(k) <= until)]
         for key in sorted(keys, key=file_start):
             if not quiet:
                 print(f'{key}:')
-            sent, cues = process_file(source, key, send, session_id, quiet, (since, until), state['sentUntil'], replay)
-            results.append(dict(key=key, samples=sent, wouldAlerts=len(cues)))
+            sent, cues, not_worn = process_file(source, key, send, session_id, quiet, (since, until), state['sentUntil'],
+                                                replay, wear)
+            results.append(dict(key=key, samples=sent, wouldAlerts=len(cues), notWorn=not_worn))
             state['done'].append(key)
     return results
+
+
+def state_path(session_id, chosen=None):
+    """Sent files are remembered per session, so re-running a recording under a new session ID reprocesses it."""
+    if chosen:
+        return chosen
+    if not session_id:
+        return STATE_FILE
+    return STATE_FILE.with_name(f"{STATE_FILE.stem}-{re.sub(r'[^A-Za-z0-9_.-]', '_', session_id)}.json")
+
+
+def report(results):
+    samples, not_worn = sum(r['samples'] for r in results), sum(r['notWorn'] for r in results)
+    print(f"Processed {len(results)} file(s): {samples} readings, {sum(r['wouldAlerts'] for r in results)} would-be cue(s), "
+          f"{not_worn} second(s) not worn.")
+    if samples and not_worn / samples > .5:
+        print(f'WARNING: the device was not worn for {not_worn / samples:.0%} of this data, so it cannot show frustration or fatigue.')
 
 
 def main(argv=None):
@@ -267,22 +381,30 @@ def main(argv=None):
     parser.add_argument('--bucket', default=S3_BUCKET)
     parser.add_argument('--prefix', default=S3_PREFIX)
     parser.add_argument('--date', action='append', help='UTC date folder (repeatable); default today and yesterday')
+    parser.add_argument('--list', action='store_true', help='Show which enrollments have data on the dates, then exit')
     parser.add_argument('--participant', help='Enrollment ID, e.g. 11 for folder 11-3YK3K151Y5')
     parser.add_argument('--since', help='Session start, UTC, e.g. 2024-05-16T22:39 (earlier data is skipped)')
     parser.add_argument('--until', help='Session end, UTC (later data is skipped)')
     parser.add_argument('--session-id', help='Override the session (default empatica-<enrollment>-<UTC date>)')
     parser.add_argument('--url', help='Loopback dashboard server, e.g. http://127.0.0.1:8000; default: process locally')
     parser.add_argument('--poll', type=float, default=0, help='Seconds between checks for new files; 0 runs once')
-    parser.add_argument('--state', type=Path, default=STATE_FILE, help='Remembers files already sent to the server')
+    parser.add_argument('--state', type=Path, help='Remembers files already sent to the server (default: one file per --session-id)')
     parser.add_argument('--replay-speed', type=float, default=0,
                         help='Demo: replay at this many readings per second (1 = real time) in a new demo session')
     args = parser.parse_args(argv)
     if args.url and not re.match(r'^http://(127\.0\.0\.1|localhost)(:\d+)?/?$', args.url):
         parser.error('--url must be the local dashboard server.')
     source = LocalSource(args.local_dir) if args.source == 'local' else S3Source(args.bucket, args.prefix)
+    if args.list:
+        for date in args.date or [(datetime.now(timezone.utc) - timedelta(days=d)).strftime('%Y-%m-%d') for d in (1, 0)]:
+            print(date)
+            for name, (avro, csvs) in availability(source, date).items():
+                print(f'  {name}: {avro} raw Avro, {csvs} per-minute CSV')
+        return
     utc = lambda text: datetime.fromisoformat(text).replace(tzinfo=timezone.utc).timestamp() if text else None
     since, until = utc(args.since), utc(args.until)
     replay = None
+    args.state = state_path(args.session_id, args.state)
     if args.replay_speed:
         if args.poll:
             parser.error('--replay-speed replays recorded files once; do not combine it with --poll.')
@@ -309,8 +431,10 @@ def main(argv=None):
             if args.url and results and not replay:
                 print(f"Follow it: {args.url.rstrip('/')}/serving/dashboard.html?session="
                       + (args.session_id or f"empatica-{args.participant or '<enrollment>'}-<UTC date>"))
-            if not results:
-                print(f"No new files for {', '.join(dates)}" + (f' (participant {args.participant})' if args.participant else ''))
+            if results:
+                report(results)
+            else:
+                print(explain_empty(source, dates, args.participant))
             if not args.poll:
                 break
             time.sleep(args.poll)

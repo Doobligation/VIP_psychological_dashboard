@@ -28,14 +28,16 @@ def holdout_model(sessions, participant, deployed, directory):
     from pipeline.frustration_model import CLASSES, FEATURES
     from training.train_frustration_model import build_windows, calibrate_xgboost, export, fit
     # Same recipe as the deployed model: its window step, and unweighted for the seen profile.
-    frame = build_windows(sessions, hop=deployed['window']['hopSeconds'])
+    normalization = deployed.get('normalization', 'running-minmax')
+    frame = build_windows(sessions, hop=deployed['window']['hopSeconds'], normalization=normalization)
     train = frame[frame.participant != participant]
     X, y = train[FEATURES].to_numpy(float), train['label'].map(CLASSES.index).to_numpy()
     weights = (None if deployed['evaluation'].get('scope') == 'seen participants'
                else 1 / train.groupby('session')['session'].transform('count').to_numpy(float))
     model = fit(deployed['family'], deployed['params'], X, y, weights)
     exported = dict(export(deployed['family'], model), schemaVersion=1, features=FEATURES, classes=CLASSES,
-                    family=deployed['family'], params=deployed['params'], heldOutParticipant=participant)
+                    family=deployed['family'], params=deployed['params'], normalization=normalization,
+                    heldOutParticipant=participant)
     if exported['modelType'] == 'xgboost':
         calibrate_xgboost(exported, model, X)
     path = Path(directory) / f'holdout_{participant}.json'

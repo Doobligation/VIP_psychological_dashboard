@@ -125,6 +125,9 @@
   .manual-grid input { width: 100%; }
 
   details { margin-top: 16px; }
+  #ml-report { overflow-wrap: anywhere; }
+  label.inline { max-width: 100%; min-width: 0; }
+  #session-picker { min-width: 0; max-width: 100%; width: 300px; }
   details > summary { cursor: pointer; font-weight: 600; padding: 10px 0; }
   .table-wrap { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -152,7 +155,7 @@
     <span class="badge" id="mode-badge">LOADING</span>
     <span class="small" id="session-label"></span>
   </header>
-  <p class="lede">Team 3 prediction and feedback system. Each prediction compares EDA, SCR, HR, RMSSD and SDNN with a resting baseline
+  <p class="lede">Team 3 prediction and feedback system. Each prediction compares EDA, SCR, HR, RMSSD and SDNN with the wearer's own baseline
     and classifies <strong>Low, Medium or High</strong> risk using the DBR masterfile rules. <strong>Only High risk gives feedback</strong>,
     and only after <strong><span id="required-lede">3</span> consecutive High predictions</strong>; a Low or Medium prediction resets the count.</p>
 
@@ -169,12 +172,13 @@
     <span class="sep" aria-hidden="true"></span>
     <label class="inline"><input type="checkbox" id="speak"> Speak feedback</label>
     <span class="sep" aria-hidden="true"></span>
-    <button id="follow" type="button">Follow live Polar session</button>
+    <label class="inline">Session <select id="session-picker" aria-label="Saved session to follow"><option value="">Choose a saved session…</option></select></label>
+    <button id="follow" type="button">Follow session</button>
   </div>
   <div class="phase" id="phase" role="status" aria-live="polite"><strong id="phase-title">Loading configuration…</strong><span class="small" id="phase-note"></span></div>
 
-  <section aria-label="Inputs: change from resting baseline">
-    <h2>Inputs · change from resting baseline</h2>
+  <section aria-label="Inputs: change from the wearer's baseline">
+    <h2>Inputs · change from the wearer's baseline</h2>
     <div class="grid-inputs" id="inputs"></div>
   </section>
 
@@ -220,7 +224,7 @@
         <button type="button" data-kind="outcome" data-value="worse" disabled>Worse</button>
       </div>
       <p class="small" id="fb-status" role="status"></p>
-      <div><h3>Feedback this session</h3><ol class="alerts" id="alert-list"></ol></div>
+      <div><h3 id="alert-heading">Feedback this session</h3><ol class="alerts" id="alert-list"></ol></div>
     </article>
 
     <article class="card stack" aria-label="Manual input">
@@ -248,8 +252,9 @@
   </details>
   <details>
     <summary>Decision rules (from config/rules.json)</summary>
-    <p class="small">Thresholds are % change from the resting baseline. Every condition in a row must hold; the highest level wins.
+    <p class="small">Thresholds are % change from the wearer's baseline. Every condition in a row must hold; the highest level wins.
       When several causes match at the same level, the most specific (strictest) pattern is reported and the others are listed.
+      When none matches exactly but at least 4 of the 5 signals agree with a cause, it is shown as the closest pattern, labelled as a partial match.
       Frustration arrows come from the DBR frustration sheet; numbers come from the stress-sheet rows with the same arrow pattern.</p>
     <div class="table-wrap" id="rules-tables"></div>
   </details>
@@ -285,7 +290,7 @@ const TIMELINE_CELLS = 40;
 
 let config = null, steps = [], stepIndex = 0, session = null, counter = 0, clock = 0;
 let running = false, busy = false, speed = 1000, following = null, followTimer = null;
-let history = [], alerts = [], lastAlert = null, lastStreak = {};
+let history = [], alerts = [], lastAlert = null, lastStreak = {}, latestResult = null, latestNotes = {};
 
 const pct = v => Number.isFinite(v) ? `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}%` : '—';
 const fmt = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '—';
@@ -318,7 +323,7 @@ function newSession() {
   running = false;
   session = { session_id: `team3-demo-${crypto.randomUUID()}`, participant: 'team3-demo', mode: 'demo' };
   counter = 0; clock = Date.now(); stepIndex = 0;
-  history = []; alerts = []; lastAlert = null; lastStreak = {};
+  history = []; alerts = []; lastAlert = null; lastStreak = {}; latestResult = null; latestNotes = {};
   setPhase('Ready', `Scripted demo: ${steps.length} predictions in ${config.scenario.phases.length} phases. Values are synthetic.`);
   $('fb-status').textContent = '';
   render();
@@ -370,8 +375,13 @@ async function run() {
   running = false; renderControls();
 }
 
-function ingest(result, phaseTitle, backfilled = false) {
+// A wearable session reads every second but predicts less often; only predictions get a timeline cell.
+const isPrediction = result => result.states?.frustration?.prediction !== false;
+
+function ingest(result, phaseTitle, { speak = true, draw = true } = {}) {
   const notes = {};
+  const predicted = isPrediction(result);
+  latestResult = result;
   for (const [key] of STATES) {
     const d = result.states[key] || {};
     const before = lastStreak[key] || 0;
@@ -382,18 +392,21 @@ function ingest(result, phaseTitle, backfilled = false) {
     // Late batch data records the cue live data would have given; it is listed but never spoken.
     if (d.wouldAlert) alerts.unshift({ ...d.wouldAlert, delivered: false });
   }
-  history.push({ n: history.length + 1, phase: phaseTitle, result, notes });
-  if (history.length > 1000) history.shift();
+  if (predicted) {
+    latestNotes = notes;
+    history.push({ n: (history.at(-1)?.n ?? 0) + 1, phase: phaseTitle, result, notes });
+    if (history.length > 1000) history.shift();
+  }
   for (const alert of result.alerts || []) {
     alerts.unshift(alert); lastAlert = alert;
     // Earlier readings loaded when following a session are shown, never spoken again.
-    if (!backfilled && $('speak').checked && globalThis.speechSynthesis && globalThis.SpeechSynthesisUtterance) {
+    if (speak && $('speak').checked && globalThis.speechSynthesis && globalThis.SpeechSynthesisUtterance) {
       globalThis.speechSynthesis.cancel();
       const prefix = result.mode === 'demo' ? 'Demonstration. ' : '';
       globalThis.speechSynthesis.speak(new SpeechSynthesisUtterance(prefix + alert.message));
     }
   }
-  if (backfilled) return;
+  if (!draw) return;
   render();
   void refreshSummary();
 }
@@ -416,6 +429,10 @@ function decisionText(d, key) {
       return { kind: 'wait', text: `High ×${count}. ${key[0].toUpperCase() + key.slice(1)} feedback was already given in the last ${config.feedback.decision.cooldownSeconds} s (cooldown).` };
     case 'warning-cap':
       return { kind: 'wait', text: `High ×${count}. Warning limit reached (${config.feedback.decision.maxWarnings} per ${config.feedback.decision.warningWindowSeconds / 60} min).` };
+    case 'same-cue-repeat':
+      return { kind: 'wait', text: `High ×${count}. This cue was already given in the last ${(config.feedback.decision.sameCueRepeatSeconds || 0) / 60} min, so it is not repeated.` };
+    case 'no-feedback-for-cause':
+      return { kind: 'quiet', text: `High ×${count}. No feedback is configured for this cause.` };
     case 'duplicate-or-reversed-timestamp': return { kind: 'quiet', text: 'Duplicate reading ignored.' };
     case 'retrospective':
       return { kind: 'wait', text: `Feedback would have been issued here after ${d.wouldAlert?.consecutive ?? n} consecutive High predictions, but the data arrived late, so no cue was sent.` };
@@ -428,12 +445,18 @@ function renderInputs(result) {
   $('inputs').replaceChildren(...SIGNALS.map(s => {
     const change = features[`${s.key}ChangePct`];
     const measured = Number.isFinite(snapshot[s.key]);
+    const beats = Number.isFinite(snapshot.cleanBeatFraction) ? `${Math.round(snapshot.cleanBeatFraction * 100)}% of beats clean` : '';
+    const hrv = s.key === 'rmssd' || s.key === 'sdnn';
+    const why = snapshot.worn === false ? 'Device not worn'
+      : (s.key === 'eda' || s.key === 'scr') && snapshot.edaBelowFloor ? 'EDA below the 0.05 µS validity floor'
+      : hrv && snapshot.hrvUsable === false ? `Too few clean beats (${beats || 'none'})`
+      : result ? 'Not measured in this reading' : 'Waiting for a prediction';
     return el('div', { className: 'card tile' },
       el('div', { className: 'label' }, el('span', { textContent: s.name }), el('span', { className: 'muted', textContent: s.unit })),
       el('div', { className: 'value', textContent: pct(change) }),
       el('div', { className: 'sub', textContent: measured
-        ? `${fmt(snapshot[s.key], s.digits)} now · ${fmt(baseline[s.key], s.digits)} baseline`
-        : result ? 'Not measured in this reading' : 'Waiting for a prediction' }));
+        ? `${fmt(snapshot[s.key], s.digits)} now · ${fmt(baseline[s.key], s.digits)} baseline${hrv && beats ? ` · ${beats}` : ''}`
+        : why }));
   }));
 }
 
@@ -445,15 +468,22 @@ function renderState(key, title, result, notes) {
   const n = required();
   const decision = result ? decisionText(d, key) : { kind: 'quiet', text: 'Waiting for the first prediction.' };
   // DBR Level 1 is "any cause", so a cause is reported only for Medium and High.
-  const cause = d?.available && d.level !== 'low' && d.causeLabel
-    ? el('p', {}, el('span', { className: 'small', textContent: 'Likely cause: ' }), el('span', { className: 'cause', textContent: d.causeLabel }))
-    : el('p', { className: 'small', textContent: d?.available ? 'Below the Medium thresholds. Low risk applies to any cause, so none is reported.' : '' });
+  const closest = d?.causeMatch === 'closest' && d.causeAgreement;
+  const named = d?.available && d.level !== 'low' && d.causeLabel && d.cause !== 'unspecified';
+  const cause = named
+    ? el('p', {}, el('span', { className: 'small', textContent: closest ? 'Closest pattern: ' : 'Likely cause: ' }),
+        el('span', { className: 'cause', textContent: d.causeLabel }),
+        closest ? el('span', { className: 'small', textContent: ` (${closest.agreeing} of ${closest.total} signals agree)` }) : null)
+    : d?.available && d.level !== 'low' && d.causeLabel
+      // The ML reason says whether signals were missing or measured without matching any pattern.
+      ? el('p', { className: 'small', textContent: `Cause not identified. ${d.reason.replace(/^ML model predicts[^.]*\.\s*/, '')}` })
+      : el('p', { className: 'small', textContent: d?.available ? 'Below the Medium thresholds. Low risk applies to any cause, so none is reported.' : '' });
   const alternatives = d?.alternatives?.length
     ? el('p', { className: 'small', textContent: `Also consistent with: ${d.alternatives.join(', ')}` }) : null;
   const m = d?.model;
   const ml = key !== 'frustration' || !m ? null : m.status === 'ml'
     ? el('p', { className: 'small', textContent: `ML (${m.family}): ${['low', 'medium', 'high'].map(c => `${LEVELS[c].label} ${Math.round(m.probabilities[c] * 100)}%`).join(' · ')}`
-        + (Number.isFinite(m.accuracy) ? ` · ${Math.round(m.accuracy * 100)}% accuracy on ${m.accuracyScope}` : '') })
+        + (Number.isFinite(m.accuracy) ? ` · about ${Math.round(m.accuracy * 100)}% accurate on ${m.accuracyScope}` : '') })
     : el('p', { className: 'small muted', textContent: `ML: ${m.reason}` });
   const dots = el('span', { className: 'dots', 'aria-hidden': 'true' },
     ...Array.from({ length: n }, (_, i) => el('i', { className: `dot${i < Math.min(count, n) ? ' on' : ''}` })));
@@ -516,8 +546,9 @@ function renderFeedback() {
   $('fb-message').textContent = a ? a.message : '';
   $('fb-details').hidden = !a;
   if (a) { $('fb-action').textContent = a.action; $('fb-goal').textContent = a.goal; $('fb-reference').textContent = a.reference || '—'; }
+  $('alert-heading').textContent = alerts.length ? `Feedback this session (${alerts.length})` : 'Feedback this session';
   $('alert-list').replaceChildren(...(alerts.length ? alerts.slice().reverse().map(x => el('li', {
-    textContent: `${x.state === 'frustration' ? 'Frustration' : 'Fatigue'} (${x.causeLabel || x.cause}): ${x.message}`
+    textContent: `${x.state === 'frustration' ? 'Frustration' : 'Fatigue'} (${x.causeLabel || x.cause}${x.causeMatch === 'closest' ? ', closest pattern' : ''}): ${x.message}`
       + (x.delivered === false ? ' (would have fired; data arrived late, not sent)' : '') }))
     : [el('li', { className: 'muted', textContent: 'None yet.' })]));
   for (const button of document.querySelectorAll('[data-kind]')) button.disabled = !a || busy;
@@ -543,8 +574,8 @@ function renderControls() {
   $('step').disabled = !ready || running || busy || live || stepIndex >= steps.length;
   $('reset').disabled = !ready || busy;
   $('send-one').disabled = $('send-three').disabled = !ready || running || busy || live;
-  $('follow').textContent = live ? 'Stop following' : 'Follow live Polar session';
-  const followedMode = live ? history.at(-1)?.result.mode : null;
+  $('follow').textContent = live ? 'Stop following' : 'Follow session';
+  const followedMode = live ? latestResult?.mode : null;
   $('mode-badge').textContent = !config ? 'OFFLINE' : followedMode === 'batch' ? 'DELAYED · EMPATICA BATCH'
     : followedMode === 'demo' ? 'DEMO · REPLAYED RECORDING' : live ? 'LIVE' : 'DEMO · SYNTHETIC DATA';
   $('session-label').textContent = live ? `Session ${following}` : session ? `Session ${session.session_id.slice(0, 22)}…` : '';
@@ -552,9 +583,8 @@ function renderControls() {
 }
 
 function render() {
-  const latest = history.at(-1);
-  renderInputs(latest?.result);
-  for (const [key, title] of STATES) renderState(key, title, latest?.result, latest?.notes);
+  renderInputs(latestResult);
+  for (const [key, title] of STATES) renderState(key, title, latestResult, latestNotes);
   renderTimeline();
   renderFeedback();
   renderLog();
@@ -574,7 +604,8 @@ async function refreshSummary() {
     const response = await fetch(`/summary?session_id=${encodeURIComponent(id)}`);
     const s = await response.json();
     if (!response.ok) throw new Error(s.error);
-    $('summary').textContent = `Saved locally: ${s.readings} readings · ${s.alerts} feedback alerts · ${s.responses} responses · ${s.outcomes} outcomes`;
+    const late = alerts.filter(a => a.delivered === false).length;
+    $('summary').textContent = `Saved locally: ${s.readings} readings · ${s.alerts} feedback alerts${late ? ` · ${late} would have fired (late data, not sent)` : ''} · ${s.responses} responses · ${s.outcomes} outcomes`;
     $('export').hidden = false;
     $('export').href = `/export?session_id=${encodeURIComponent(id)}`;
     $('export').download = `${id}.json`;
@@ -590,45 +621,73 @@ const phaseLabel = mode => ({ batch: 'Empatica batch', demo: 'Replay' })[mode] |
 async function poll() {
   const id = following;
   try {
-    // Fetch every reading newer than the last one shown, so a 1-per-second stream never skips.
-    const response = await fetch(`/history?session_id=${encodeURIComponent(id)}&limit=50`, { cache: 'no-store' });
-    const rows = await response.json();
-    if (!response.ok) throw new Error(rows.error);
+    // Ask for what is newer than the last reading shown, so a fast batch upload never skips any.
+    const last = latestResult?.timestamp_ms ?? -1;
+    const response = await fetch(`/history?session_id=${encodeURIComponent(id)}&limit=2000&after=${last}`, { cache: 'no-store' });
+    const fresh = await response.json();
+    if (!response.ok) throw new Error(fresh.error);
     if (following !== id) return;
-    const last = history.at(-1)?.result.timestamp_ms ?? -Infinity;
-    const fresh = rows.filter(row => row.timestamp_ms > last);
     const title = `Following session ${id}`;
     if (!fresh.length) {
-      if (!rows.length) setPhase(title, 'Waiting for readings.');
+      if (!latestResult) setPhase(title, 'Waiting for readings.');
       return;
     }
-    setPhase(title, followNote(fresh.at(-1).mode));
-    for (const row of fresh) ingest(row, phaseLabel(row.mode));
+    setPhase(title, followNote(fresh.at(-1)));
+    for (const row of fresh) ingest(row, phaseLabel(row.mode), { draw: false });
+    render(); void refreshSummary();
   } catch (error) { setPhase('Session unavailable', error.message, true); }
 }
 
-const followNote = mode => ({
-  batch: 'Delayed Empatica data from AWS (30-minute uploads): predictions are logged, feedback is recorded but not sent.',
-  demo: 'Replaying a recorded Empatica session one reading at a time. Demo mode: High-frustration cues are delivered with a "Demonstration" prefix.',
-})[mode] || 'Predictions come from the Polar H10 panel. Frustration needs an EDA sensor for EDA and SCR.';
+function followNote(row) {
+  if (row.features?.snapshot?.worn === false) return 'The device was not worn for this reading, so nothing is predicted from it.';
+  return ({
+    batch: 'Delayed Empatica data from AWS (30-minute uploads): one prediction every 30 s, logged; feedback is recorded but not sent.',
+    demo: 'Replaying a recorded Empatica session one reading at a time. Demo mode: High-frustration cues are delivered with a "Demonstration" prefix.',
+  })[row.mode] || 'Predictions come from the Polar H10 panel. Frustration needs an EDA sensor for EDA and SCR.';
+}
 
 async function backfill(id) {
-  const response = await fetch(`/history?session_id=${encodeURIComponent(id)}&limit=${TIMELINE_CELLS}`, { cache: 'no-store' });
-  const rows = await response.json();
-  if (!response.ok) throw new Error(rows.error);
+  // Enough readings to fill the timeline at one prediction every 30 s; the cue list covers the whole session.
+  const [historyResponse, cueResponse] = await Promise.all([
+    fetch(`/history?session_id=${encodeURIComponent(id)}&limit=2000`, { cache: 'no-store' }),
+    fetch(`/cues?session_id=${encodeURIComponent(id)}`, { cache: 'no-store' }),
+  ]);
+  const [rows, cues] = await Promise.all([historyResponse.json(), cueResponse.json()]);
+  if (!historyResponse.ok) throw new Error(rows.error);
+  if (!cueResponse.ok) throw new Error(cues.error);
   if (following !== id) return;
-  for (const row of rows) ingest(row, phaseLabel(row.mode), true);
-  if (rows.length) setPhase(`Following session ${id}`, followNote(rows.at(-1).mode));
+  for (const row of rows) ingest(row, phaseLabel(row.mode), { speak: false, draw: false });
+  alerts = cues.slice().reverse();
+  if (rows.length) setPhase(`Following session ${id}`, followNote(rows.at(-1)));
   render(); void refreshSummary();
 }
 
+async function loadSessions(selected = null) {
+  const picker = $('session-picker');
+  let polar = null;
+  try { polar = localStorage.getItem('polar-last-saved-session'); } catch { /* storage may be blocked */ }
+  try {
+    const response = await fetch('/sessions?limit=100', { cache: 'no-store' });
+    const rows = await response.json();
+    if (!response.ok) throw new Error(rows.error);
+    // Hide the scripted demo's throwaway sessions and any session with nothing saved yet.
+    const usable = rows.filter(r => r.readings > 0 && !r.session_id.startsWith('team3-demo-'));
+    const keep = selected || picker.value || polar || '';
+    picker.replaceChildren(el('option', { value: '', textContent: usable.length ? 'Choose a saved session…' : 'No saved sessions yet' }),
+      ...usable.map(r => el('option', { value: r.session_id, textContent:
+        `${r.session_id} · ${r.mode}${r.session_id === polar ? ' · last Polar' : ''} · ${r.readings} readings` })));
+    if (usable.some(r => r.session_id === keep)) picker.value = keep;
+  } catch { /* the picker is a convenience; ?session=<id> still works */ }
+}
+
 function follow(requested = null) {
-  if (following && !requested) { stopFollowing(); newSession(); return; }
-  let id = requested;
-  if (!id) try { id = localStorage.getItem('polar-last-saved-session'); } catch { /* storage may be blocked */ }
-  if (!id) { setPhase('No live session found', 'Connect the Polar H10 on the platform dashboard and save readings first.', true); return; }
+  if (following && !requested) { stopFollowing(); window.history.replaceState(null, '', location.pathname); newSession(); return; }
+  const id = requested || $('session-picker').value;
+  if (!id) { setPhase('Choose a session', 'Pick a saved session first. Empatica sessions come from tools/empatica_bridge.py; Polar sessions from the platform dashboard.', true); return; }
   running = false; stopFollowing();
-  following = id; session = null; history = []; alerts = []; lastAlert = null; lastStreak = {};
+  following = id; session = null; history = []; alerts = []; lastAlert = null; lastStreak = {}; latestResult = null; latestNotes = {};
+  // The address bar always holds a link to this session, ready to share.
+  window.history.replaceState(null, '', `?session=${encodeURIComponent(id)}`);
   setPhase(`Following session ${id}`, 'Loading recent readings…');
   render();
   // Load recent history first so newer polled readings always append in order.
@@ -725,14 +784,27 @@ async function loadModelReport() {
     const sel = r.nestedLopo.selected;
     const byId = (a, b) => Number(a.participant.slice(1)) - Number(b.participant.slice(1));
     const families = Object.keys(r.nestedLopo).filter(k => k !== 'selected');
+    const control = r.controls, previous = r.previousModel;
     box.replaceChildren(
-      el('p', {}, el('strong', { textContent: `${pctText(sel.windowAccuracy)} accuracy on people the model never trained on` }),
+      el('p', {}, el('strong', { textContent: `${pctText(sel.windowAccuracy)} accuracy on new people (people the model never trained on)` }),
         ` (95% CI ${pctText(sel.windowAccuracy95CI[0])}–${pctText(sel.windowAccuracy95CI[1])}; macro-F1 ${sel.macroF1.toFixed(2)}).`),
       el('p', { className: 'small', textContent: `Nested leave-one-participant-out cross-validation on ${r.data.participants} participants, `
         + `${r.data.sessions} sessions and ${r.data.windows} one-minute windows. Deployed: ${r.selectedModel.family} `
-        + `${JSON.stringify(r.selectedModel.params)}. Chance for three classes is 33%. A random window split scores `
+        + `(${Object.entries(r.selectedModel.params).map(([k, v]) => `${k.replaceAll('_', ' ')} ${v}`).join(', ')}). Chance for three classes is 33%. A random window split scores `
         + `${pctText(r.baselines.randomWindowSplitLeaky.windowAccuracy)}, but that tests on people seen in training, so it overstates accuracy.` }),
-      el('h3', { textContent: 'Model families (each tuned only on training participants)' }),
+      ...(control ? [el('h3', { textContent: 'Controls and the previous model' }),
+        table(['Test', 'Accuracy', 'What it shows'], [
+          ['This model: new people (nested)', pctText(sel.windowAccuracy), 'The number to expect for a new worker.'],
+          ['This model: fake labels, random split', pctText(control.fakeLabelRandomSplitAccuracy), 'Each participant gets a random label. A score well above 33% means the model recognizes people.'],
+          ['Chance on new people (permutation test)', `${pctText(control.permutation.chanceMean)} mean, ${pctText(control.permutation.chance95th)} 95th pct`,
+            `Fixed settings score ${pctText(control.permutation.realLopoAccuracy)} on real labels; p = ${control.permutation.pValue}.`],
+          ...(previous ? [
+            ['Previous model: random split', pctText(previous.randomSplitAccuracy), `${previous.family}. The figure it was reported with; mostly person recognition.`],
+            ['Previous model: new people', pctText(previous.newPeopleAccuracy), 'Its accuracy for a new worker, near chance.'],
+            ['Previous model: fake labels, random split', pctText(previous.fakeLabelRandomSplitAccuracy), 'Nearly its headline score, on labels with no meaning.'],
+          ] : []),
+        ], [1])] : []),
+      el('h3', { textContent: 'Model families and per-wearer scalings (each tuned only on training participants)' }),
       table(['Model', 'Accuracy', 'Macro-F1', 'Session vote', 'Recall L / M / H'], [...families, 'selected'].map(f => {
         const x = r.nestedLopo[f];
         return [f === 'selected' ? 'Full selection procedure' : f, pctText(x.windowAccuracy), x.macroF1.toFixed(2),
@@ -753,6 +825,8 @@ $('step').addEventListener('click', () => void guarded(stepOnce));
 $('reset').addEventListener('click', () => newSession());
 $('speed').addEventListener('change', e => { speed = Number(e.target.value); });
 $('follow').addEventListener('click', () => follow());
+$('session-picker').addEventListener('pointerdown', () => void loadSessions());
+$('session-picker').addEventListener('focus', () => void loadSessions());
 $('speak').addEventListener('change', e => { if (!e.target.checked) globalThis.speechSynthesis?.cancel(); });
 $('send-one').addEventListener('click', () => void guarded(async () => { setPhase('Manual input', 'Your values, sent as one prediction.'); await send(manualValues(), 'Manual input'); }));
 $('send-three').addEventListener('click', () => void guarded(async () => {
@@ -774,8 +848,9 @@ if (!globalThis.speechSynthesis) { $('speak').disabled = true; $('speak').parent
 
 loadConfig().then(() => {
   renderStatic(); newSession(); void loadModelReport();
-  // ?session=<id> follows any saved session, e.g. one fed by tools/empatica_bridge.py.
+  // ?session=<id> is a shareable link to any saved session; the picker lists them all.
   const requested = new URLSearchParams(location.search).get('session');
+  void loadSessions(requested);
   if (requested) follow(requested);
 }).catch(error => {
   setPhase('Configuration unavailable', `${error.message}. Start the local server (python3 serve_dashboard.py) and open http://127.0.0.1:8000/serving/dashboard.html.`, true);
