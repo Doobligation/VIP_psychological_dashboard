@@ -56,3 +56,38 @@ test('the model card leads with accuracy on new people', async ({ page }) => {
   await page.locator('#ml-details summary').click();
   await expect(page.locator('#ml-report strong').first()).toContainText('new people');
 });
+
+test('a High prediction asks a Quick check; answers and self-reports are saved and scored', async ({ page }) => {
+  await page.goto('/serving/dashboard.html');
+  await expect(page.locator('#feel')).toBeDisabled();
+  await page.locator('#speed').selectOption('500');
+  await page.locator('#run').click();
+  await expect(page.locator('#checkin-title')).toHaveText('Quick check', { timeout: 30000 });
+  await page.locator('#pause').click();
+  await expect(page.locator('#checkin-intro')).toContainText('Frustration predicted High');
+  await expect(page.locator('#checkin-clock')).toContainText('Closes in');
+  await expect(page.locator('#checkin-cause option:checked')).toContainText('(predicted)');
+  const send = page.locator('#checkin-send');
+  await expect(send).toBeDisabled();
+  await page.locator('#checkin [data-state=frustration][data-value=yes]').click();
+  await expect(send).toBeDisabled();  // both questions are required
+  await page.locator('#checkin [data-state=fatigue][data-value=no]').click();
+  await page.locator('#checkin-note').fill('Deadline moved up');
+  await send.click();
+  await expect(page.locator('#checkin')).toContainText('Your answer is saved');
+  await expect(page.locator('#checkin-table')).toContainText('Deadline moved up');
+  await expect(page.locator('#checkin-table')).toContainText('Agrees');
+  await expect(page.locator('#timeline .mark', { hasText: '?' })).toHaveCount(1);
+
+  await page.locator('#feel').click();
+  await expect(page.locator('#checkin-title')).toHaveText('How do you feel?');
+  await page.locator('#checkin [data-state=frustration][data-value=no]').click();
+  await page.locator('#checkin [data-state=fatigue][data-value=a-little]').click();
+  await page.locator('#checkin-send').click();
+  await expect(page.locator('#checkin-table')).toContainText('Self-report');
+  const stats = page.locator('#checkin-stats .stat');
+  await expect(stats.nth(1)).toContainText('1');  // answered
+  await expect(stats.nth(4)).toContainText('1');  // self-reports
+  await expect(page.locator('#agreement-table')).toContainText('Scripted demo · DBR rules (demo)');
+  await expect(page.locator('#checkin-files')).toContainText('checkins.csv');
+});

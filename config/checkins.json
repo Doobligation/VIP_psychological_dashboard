@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "version": "team3-checkins-2026-11-12",
+  "source": "Closed-Loop Feedback in CHAP: Step-by-Step Guide (Nov 11, 2026), steps 5-8 and the settings table. The guide's stress is this project's frustration (its stress labels come from the Frustration DBR); its mental load is fatigue.",
+  "askLevels": {
+    "frustration": ["high"],
+    "fatigue": ["high"]
+  },
+  "askSources": ["empatica-avro", "team3-dashboard"],
+  "minGapMinutes": 15,
+  "maxAgeMinutes": 30,
+  "expireMinutes": 10,
+  "littleCountsAs": "yes",
+  "questions": {
+    "frustration": "Were you feeling frustrated at that time?",
+    "fatigue": "Were you feeling tired at that time?",
+    "cause": "What was going on?",
+    "selfFrustration": "Are you feeling frustrated right now?",
+    "selfFatigue": "Are you feeling tired right now?"
+  },
+  "implementationChoices": [
+    "askLevels is the guide's ASK_STRESS / ASK_LOAD: ask only after a High frustration or High fatigue prediction. Add \"medium\" to ask more often and learn the middle band.",
+    "askSources lists the raw.source values that may trigger a question. The Polar H10 is left out because the guide treats a heart-only signal as research only; its predictions are still counted.",
+    "minGapMinutes (MIN_GAP_MIN), the single open question and the expiry apply per session. Self-reports through \"How do you feel?\" do not start the gap.",
+    "maxAgeMinutes (MAX_AGE_MIN) is measured from the predicted moment to the time of asking, so late Empatica uploads are asked about only while the moment is under 30 minutes old.",
+    "expireMinutes (EXPIRE_MIN): an unanswered question is saved as \"no answer\".",
+    "littleCountsAs decides whether \"A little\" counts as felt when agreement is measured; retraining takes its own --little option.",
+    "Demo-mode answers are stored and shown, but retraining leaves them out unless --include-demo is given, and then refuses --apply."
+  ]
+}

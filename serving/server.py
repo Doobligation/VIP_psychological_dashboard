@@ -6,9 +6,11 @@ import copy
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -20,11 +22,13 @@ if __package__ in (None, ''):
 from storage import SQLiteStore
 from storage.sqlite_store import PRIVATE_DATABASES
 from pipeline.feedback_pipeline import STATES
+from pipeline import checkins as checkin_rules
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / '.local' / 'closed_loop.sqlite3'
 MAX_JSON_BYTES = 1_000_000
-ROUTES = {'/samples', '/latest', '/decision', '/context', '/feedback', '/summary', '/export', '/history', '/sessions', '/cues'}
+ROUTES = {'/samples', '/latest', '/decision', '/context', '/feedback', '/summary', '/export', '/history', '/sessions', '/cues',
+          '/checkins'}
 MAX_HISTORY = 2000
 MAX_SESSIONS = 200
 
@@ -50,12 +54,29 @@ def iso_time(ms):
     return datetime.fromtimestamp(ms/1000, timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
+def _atomic_text(path, text):
+    """Replace a file in one step, so Excel or a reader never sees half a file."""
+    path = Path(path)
+    with tempfile.NamedTemporaryFile('w', encoding='utf-8', newline='', dir=path.parent, suffix='.tmp', delete=False) as stream:
+        stream.write(text)
+        temporary = stream.name
+    os.replace(temporary, path)
+
+
 class ClosedLoopService:
-    def __init__(self, db_path=DEFAULT_DB, model_path=None):
+    def __init__(self, db_path=DEFAULT_DB, model_path=None, checkin_settings=None, checkin_dir=None):
         self.lock = threading.RLock()
         self.model_path = model_path
         self.store = SQLiteStore(db_path)
+        self.checkin_settings = checkin_rules.load_settings(checkin_settings)
+        # The guide's live_output/<worker>: one folder per participant beside the private database.
+        self.checkin_dir = Path(checkin_dir) if checkin_dir else Path(db_path).parent / 'checkins'
+        self.level_cache = {}
         self._restore_pipeline()
+        self.causes = {key: cause.get('label', key) for state in checkin_rules.STATES
+                       for key, cause in self.pipeline.rules['states'][state].get('causes', {}).items() if key != 'unspecified'}
+        with self.lock:
+            self._expire_checkins(time.time()*1000)
 
     def _restore_pipeline(self):
         from pipeline import FeedbackPipeline
@@ -90,6 +111,8 @@ class ClosedLoopService:
         if mode in ('live', 'batch') and timestamp > time.time()*1000 + self._fresh_ms():
             raise ValueError('timestamp_ms is in the future.')
         with self.lock:
+            # Close questions that ran out first, so an expired one never blocks the next.
+            self._expire_checkins(time.time()*1000)
             existing = self.store.reading(session_id, sample_id=sample['sample_id'])
             if existing:
                 # An idempotency key cannot silently change the session identity.
@@ -127,11 +150,187 @@ class ClosedLoopService:
                         if state.get('alert') and state['alert']['id'] in mapping:
                             state['alert']['id'] = mapping[state['alert']['id']]
                     self.store.save_reading(sample, result, received_ms, effective)
+                    opened = self._consider_checkin(effective, result, received_ms)
             except Exception:
                 # Failed storage must not leave an unlogged observation in decision state.
                 self._restore_pipeline()
                 raise
+            if session_id in self.level_cache:
+                self._count_levels(self.level_cache[session_id], self._level_row(effective, result))
+            if opened:
+                self._write_checkin_files(opened['participant'])
             return copy.deepcopy(result)
+
+    # ------------------------------------------------------------ closed-loop check-ins (guide steps 5-8)
+
+    def _consider_checkin(self, sample, result, now):
+        """Open a Quick check for a High prediction: one open at a time, a gap between, recent moments only."""
+        settings = self.checkin_settings
+        states = checkin_rules.triggers(settings, sample, result)
+        if not states or now - result['timestamp_ms'] > settings['maxAgeMinutes'] * checkin_rules.MINUTE_MS:
+            return None
+        session_id = result['session_id']
+        if self.store.open_checkin(session_id):
+            return None
+        last = self.store.last_checkin_ms(session_id, 'prompted')
+        if last is not None and now - last < settings['minGapMinutes'] * checkin_rules.MINUTE_MS:
+            return None
+        prediction = checkin_rules.predicted(sample, result)
+        record = dict(id=uuid.uuid4().hex, kind='prompted', status='open', session_id=session_id,
+                      participant=sample['participant'], mode=sample['mode'], device=checkin_rules.device_key(sample),
+                      reading_id=result['reading_id'], moment_ms=result['timestamp_ms'], asked_ms=now,
+                      expires_ms=now + settings['expireMinutes'] * checkin_rules.MINUTE_MS, answered_ms=None,
+                      trigger=states, predicted=prediction, predictedCause=checkin_rules.predicted_cause(prediction, states),
+                      answers={}, reportedCause=None, note='', features=checkin_rules.moment_features(result),
+                      settingsVersion=settings['version'])
+        self.store.save_checkin(record)
+        return record
+
+    def _expire_checkins(self, now):
+        """A question nobody answers within expireMinutes is saved as "no answer"."""
+        due = self.store.due_checkins(now)
+        if not due:
+            return
+        with self.store.connection:
+            for record in due:
+                record.update(status='no-answer', closed_ms=record['expires_ms'])
+                self.store.update_checkin(record)
+        for participant in {record['participant'] for record in due}:
+            self._write_checkin_files(participant)
+
+    def _checkin_folder(self, participant):
+        return self.checkin_dir / checkin_rules.folder_name(participant)
+
+    def _write_checkin_files(self, participant):
+        """Mirror the participant's check-ins to checkins.csv (Excel) and checkins.json (with features).
+
+        SQLite stays the record; a failed file write is reported and retried on the next change."""
+        records = self.store.checkins(participant=participant)
+        little = self.checkin_settings['littleCountsAs']
+        folder = self._checkin_folder(participant)
+        try:
+            folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+            _atomic_text(folder / 'checkins.csv', checkin_rules.csv_text(records, little))
+            _atomic_text(folder / 'checkins.json', checkin_rules.json_text(records, little))
+        except OSError as exc:
+            print(f'Could not write check-in files for {participant}: {exc}', file=sys.stderr)
+
+    @staticmethod
+    def _level_row(sample, result):
+        row = {'source': (sample.get('raw') or {}).get('source') if isinstance(sample.get('raw'), dict) else None}
+        for state in checkin_rules.STATES:
+            d = result['states'].get(state) or {}
+            row[f'{state}_available'], row[f'{state}_level'] = d.get('available'), d.get('level')
+            row[f'{state}_prediction'] = d.get('prediction')
+        return row
+
+    @staticmethod
+    def _count_levels(levels, row):
+        if levels['device'] is None:
+            levels['device'] = checkin_rules.device_label(row['source'] or 'polar-h10')
+        for state in checkin_rules.STATES:
+            prediction = row[f'{state}_prediction']
+            if prediction is not None and not prediction:
+                continue  # a held result between a wearable's predictions
+            counts = levels[state]
+            level = row[f'{state}_level'] if row[f'{state}_available'] and row[f'{state}_level'] in checkin_rules.LEVELS else 'unavailable'
+            counts[level] += 1
+            counts['run'] = counts['run'] + 1 if level in ('medium', 'high') else 0
+            counts['longestRun'] = max(counts['longestRun'], counts['run'])
+
+    def _levels(self, session_id):
+        """Predictions by level for one session, plus the Medium-or-higher run; cached, then counted as readings arrive."""
+        if session_id not in self.level_cache:
+            levels = dict(device=None, **{state: dict(low=0, medium=0, high=0, unavailable=0, run=0, longestRun=0)
+                                          for state in checkin_rules.STATES})
+            for row in self.store.prediction_levels(session_id):
+                self._count_levels(levels, dict(row))
+            self.level_cache[session_id] = levels
+        return copy.deepcopy(self.level_cache[session_id])
+
+    def checkins(self, session_id):
+        """The open question, this session's check-ins, agreement and predictions by level."""
+        identifier(session_id, 'session_id')
+        little = self.checkin_settings['littleCountsAs']
+        with self.lock:
+            now = time.time()*1000
+            self._expire_checkins(now)
+            records, everything = self.store.checkins(session_id=session_id), self.store.checkins()
+            levels = self._levels(session_id)
+            session = self.store.session(session_id)
+        public = lambda r: {k: v for k, v in r.items() if k != 'features'} | {'agrees': checkin_rules.agreement(r, little)}
+        folder = None
+        if session:
+            path = self._checkin_folder(session['participant'])
+            try:
+                folder = str(path.resolve().relative_to(ROOT))
+            except ValueError:
+                folder = str(path)
+        settings = self.checkin_settings
+        return dict(session_id=session_id, now_ms=now, open=next((public(r) for r in reversed(records) if r['status'] == 'open'), None),
+                    checkins=[public(r) for r in reversed(records[-200:])], session=checkin_rules.summarize(records, little),
+                    all=checkin_rules.summarize(everything, little), levels=levels, causes=self.causes, folder=folder,
+                    settings={k: settings[k] for k in ('version', 'questions', 'askLevels', 'askSources', 'minGapMinutes',
+                                                       'maxAgeMinutes', 'expireMinutes', 'littleCountsAs')})
+
+    def checkin_action(self, payload):
+        """Answer or dismiss an open question, or save a self-report ("How do you feel?")."""
+        finite_json(payload)
+        session_id = identifier(payload.get('session_id'), 'session_id')
+        kind = payload.get('kind')
+        little = self.checkin_settings['littleCountsAs']
+        with self.lock:
+            now = time.time()*1000
+            self._expire_checkins(now)
+            if kind in ('answer', 'dismiss'):
+                record = self.store.checkin(session_id, identifier(payload.get('checkin_id'), 'checkin_id'))
+                if not record:
+                    raise ValueError('checkin_id does not belong to this session.')
+                if record['status'] != 'open':
+                    raise ValueError(f"This question is already closed ({checkin_rules.STATUS_LABELS[record['status']].lower()}).")
+                if kind == 'answer':
+                    answers, cause, note = checkin_rules.parse_answers(payload, self.causes)
+                    record.update(status='answered', answers=answers, reportedCause=cause, note=note, answered_ms=now)
+                else:
+                    record.update(status='dismissed', closed_ms=now)
+                with self.store.connection:
+                    self.store.update_checkin(record)
+            elif kind == 'self-report':
+                session = self.store.session(session_id)
+                if not session:
+                    raise ValueError('Unknown session: readings must arrive before a self-report.')
+                answers, cause, note = checkin_rules.parse_answers(payload, self.causes)
+                last = self.store.last_checkin_ms(session_id, 'self-report')
+                if last is not None and now - last < checkin_rules.SELF_REPORT_SPACING_MS:
+                    raise ValueError('A self-report was just saved for this session; wait a moment before sending another.')
+                row = self.store.latest(session_id)
+                sample = json.loads(row['sample_json']) if row else {}
+                linked = row is not None and abs(now - row['timestamp_ms']) <= checkin_rules.SELF_REPORT_MATCH_MS
+                result = json.loads(row['result_json']) if linked else None
+                device = checkin_rules.device_key(sample) if row else 'unknown'
+                if linked:
+                    prediction = checkin_rules.predicted(sample, result)
+                else:
+                    label = checkin_rules.device_label(device)
+                    prediction = {s: dict(level='unavailable', cause=None, causeLabel=None, source=f'{label} · no reading yet')
+                                  for s in checkin_rules.STATES}
+                record = dict(id=uuid.uuid4().hex, kind='self-report', status='answered', session_id=session_id,
+                              participant=session['participant'], mode=session['mode'], device=device,
+                              reading_id=row['id'] if linked else None, moment_ms=now, asked_ms=now, expires_ms=None,
+                              answered_ms=now, trigger=[], predicted=prediction,
+                              predictedCause=checkin_rules.predicted_cause(prediction, checkin_rules.STATES),
+                              answers=answers, reportedCause=cause, note=note,
+                              features=checkin_rules.moment_features(result) if linked else None,
+                              settingsVersion=self.checkin_settings['version'])
+                if not linked:
+                    record['featuresNote'] = ('No reading at this moment yet (delayed upload); retraining uses the '
+                                              'session reading nearest this time.')
+                with self.store.connection:
+                    self.store.save_checkin(record)
+            else:
+                raise ValueError('kind must be answer, dismiss or self-report.')
+            self._write_checkin_files(record['participant'])
+            return {k: v for k, v in record.items() if k != 'features'} | {'agrees': checkin_rules.agreement(record, little)}
 
     def _fresh_ms(self):
         return self.pipeline.feedback['decision']['freshSeconds'] * 1000
@@ -293,7 +492,8 @@ class ClosedLoopService:
             return {'schemaVersion':2,'sessionId':session_id,'participant':context['participant'], 'mode':context['mode'],
                     'context':context['context'], 'fatigueRatings':[r for r in feedback if r['kind']=='rating'],
                     'readings':readings,'alerts':alerts,'responses':[r for r in feedback if r['kind']=='response'],
-                    'outcomes':[r for r in feedback if r['kind']=='outcome']}
+                    'outcomes':[r for r in feedback if r['kind']=='outcome'],
+                    'checkins':self.store.checkins(session_id=session_id)}
 
 
 _default_service = None
@@ -363,7 +563,7 @@ class FeedbackAPIMixin:
                 self._feedback_json({'error':'Only same-origin loopback requests are allowed.'},403)
                 return True
             method = self.command
-            allowed = ('POST',) if parsed.path in ('/samples','/feedback') else ('GET','POST') if parsed.path == '/context' else ('GET',)
+            allowed = ('POST',) if parsed.path in ('/samples','/feedback') else ('GET','POST') if parsed.path in ('/context','/checkins') else ('GET',)
             if method not in allowed:
                 self.close_connection = True
                 self._feedback_json({'error':'Method not allowed.'},405)
@@ -386,7 +586,8 @@ class FeedbackAPIMixin:
                 finite_json(payload)
             service = getattr(self, 'feedback_service', None) or get_feedback_service()
             if method == 'POST':
-                handler = {'/samples':service.process_sample,'/feedback':service.feedback,'/context':service.set_context}[parsed.path]
+                handler = {'/samples':service.process_sample,'/feedback':service.feedback,'/context':service.set_context,
+                           '/checkins':service.checkin_action}[parsed.path]
                 result = handler(payload)
             else:
                 query = parse_qs(parsed.query)
@@ -406,7 +607,8 @@ class FeedbackAPIMixin:
                     if after is not None and not math.isfinite(after): raise ValueError('after must be a finite time.')
                     result = service.history(session_id, int(limits[0]), after)
                 else:
-                    handler = {'/latest':service.latest,'/decision':service.latest,'/context':service.context,'/summary':service.summary,'/export':service.export,'/cues':service.cues}[parsed.path]
+                    handler = {'/latest':service.latest,'/decision':service.latest,'/context':service.context,'/summary':service.summary,
+                               '/export':service.export,'/cues':service.cues,'/checkins':service.checkins}[parsed.path]
                     result = handler(session_id)
             self._feedback_json(result)
         except (ValueError, TypeError, KeyError, OverflowError, RecursionError, UnicodeDecodeError) as exc:

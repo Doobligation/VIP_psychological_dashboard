@@ -63,7 +63,7 @@ class FeedbackPipeline:
                    causeAssessed=rule['available'], causeMatch=match, causeAgreement=closest,
                    reason=f"ML model predicts {level} frustration ({probabilities[level]:.0%}). {cause_note}")
         out['model'] = dict(status='ml', family=model.data.get('family'), probabilities=probabilities,
-                            ruleLevel=rule['level'], features=features,
+                            ruleLevel=rule['level'], features=features, normalization=model.normalization,
                             accuracy=evaluation.get('metrics', {}).get('windowAccuracy'),
                             accuracyScope=evaluation.get('scope', 'unseen participants'))
         return out

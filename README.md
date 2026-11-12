@@ -22,6 +22,13 @@ Empatica EmbracePlus data arrives through AWS S3 in 30-minute files, so it is de
 to feed it in; its predictions are logged, and cues that would have fired are recorded but not sent. Then pick
 the session in the dashboard's Session menu. Details are in the Team 3 guide.
 
+**Closed loop.** After a High frustration or fatigue prediction, the dashboard shows a **Quick check**
+("Were you feeling frustrated at that time?" Yes / A little / No) and saves the answer to
+`.local/checkins/<worker>/checkins.csv`; **How do you feel?** sends a self-report at any time. The dashboard shows
+how often High was confirmed, per source. `python3 training/retrain_from_checkins.py` retrains with the answers,
+and `--apply` switches the model only if it is not worse. Settings are in `config/checkins.json`. See
+[the closed-loop section](docs/TEAM3_FRUSTRATION_FATIGUE.md#closed-loop-worker-check-ins-and-retraining).
+
 ```bash
 python3 serve_dashboard.py
 # open http://127.0.0.1:8000/serving/dashboard.html and click "Run scripted demo"

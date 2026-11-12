@@ -25,6 +25,11 @@ flowchart LR
   F --> H["Worker response<br/>+ outcome buttons"]
   H --> I["SQLite log<br/>readings, alerts,<br/>responses, outcomes"]
   D --> I
+  D -->|High| K["Quick check<br/>Yes / A little / No<br/>config/checkins.json"]
+  M -->|High| K
+  K --> I
+  K --> R["Retrain from answers<br/>switch only if not worse"]
+  R -->|updated model| M
 ```
 
 ## Input data and preprocessing
@@ -260,6 +265,55 @@ High feedback text is taken from the DBR masterfile:
 
 Feedback is delivered as on-screen text and through browser speech. The worker can answer with Acknowledge, I took a break or Not helpful, and can then report Better, The same or Worse. Every reading, alert, response and outcome is stored in a local SQLite database and can be exported as session JSON.
 
+## Closed loop: worker check-ins and retraining
+
+This follows *Closed-Loop Feedback in CHAP: Step-by-Step Guide* (Nov 11, 2026; a course handout, not in this repository). In an open loop the model never learns whether its High was right. Here, after a High prediction the worker is asked how they felt, and each answer is saved as a label that a candidate model can learn from. The guide's **stress is frustration here** (its stress labels come from the Frustration DBR), and its **mental load is fatigue**. Steps 1–4 (sense, prepare, predict, respond) are the pipeline above.
+
+| Guide step | In this project |
+| --- | --- |
+| 4. Count | **Predictions by level** on the dashboard counts Low, Medium, High and Unavailable per state for the session, with the current and longest run of Medium-or-higher predictions. Feedback timing is unchanged: the assignment's 3 consecutive Highs, not the guide's 3 Mediums. There is no breathing screen. |
+| 5. Decide whether to ask | The server decides after each prediction. It asks only for a High frustration or High fatigue prediction from an Empatica session or the scripted demo, at most once every 15 minutes per session, only about a moment from the last 30 minutes, with one question open at a time. |
+| 6. Ask | A **Quick check** card on the dashboard, spoken once when *Speak feedback* is on: *Were you feeling frustrated at that time?* and *Were you feeling tired at that time?* (Yes / A little / No), plus *What was going on?* with the predicted cause filled in and an optional note. **How do you feel?** sends a self-report at any time. |
+| 7. Store | SQLite (`checkins` table), mirrored per worker to `.local/checkins/<worker>/checkins.csv` (opens in Excel) and `checkins.json` (with the sensor features of that moment). A question nobody answers within 10 minutes is saved as "no answer"; **Not now** is saved as such. |
+| 8. Measure agreement | **Closed loop · check-ins and agreement** on the dashboard: questions asked and answered, how often High was confirmed per state and source (for example *Empatica · ML model*, *Empatica · DBR rules*) across all sessions, and every check-in with its prediction, answer and whether they agree. |
+| 9. Retrain | `python3 training/retrain_from_checkins.py` (below). |
+| 10. Deploy safely | `python3 training/retrain_from_checkins.py --apply`, then restart `python3 serve_dashboard.py`. |
+
+**Settings.** Every setting trades more labels against more interruptions. The guide's `checkin.py` constants are in [`config/checkins.json`](../config/checkins.json), so they change without code edits:
+
+| Setting | Default | Where | Why |
+| --- | --- | --- | --- |
+| When to ask | High frustration, High fatigue | `askLevels` (guide: `ASK_STRESS`, `ASK_LOAD`) | Add `"medium"` to ask more often and learn the middle band |
+| Which sources ask | Empatica, scripted demo | `askSources` | The guide treats a heart-only signal (Polar H10) as research only; its predictions are still counted |
+| Gap between questions | 15 min | `minGapMinutes` (`MIN_GAP_MIN`) | Fewer interruptions while working |
+| Oldest moment asked about | 30 min | `maxAgeMinutes` (`MAX_AGE_MIN`) | People forget how they felt; wristband data arrives late |
+| Question closes after | 10 min | `expireMinutes` (`EXPIRE_MIN`) | An unanswered question is saved as "no answer" |
+| "A little" counts as | felt | `littleCountsAs` (dashboard); `--little yes` or `--little no` (retraining) | Decides the label for the middle answer |
+| Weight of one answer | 3 study windows | `--weight 3` | How strongly site answers move the model |
+| Answers before training | 20, with both Yes and No | `--min 20` | Too few answers give an unreliable model |
+| Switch only if | as good on the answers and at most 0.02 lower on the study | `--apply` (`--force` overrides), `--max-study-loss` | Protects against a worse live model |
+
+**Retraining.** `training/retrain_from_checkins.py` keeps the deployed model's family, settings and per-wearer scaling (Extra-Trees, rolling-z). The candidate is trained on the study windows (`.local/data/Frustration`) plus every answered check-in whose moment has ML features. "Yes" is High frustration and "No" is Low. The script compares current and candidate two ways:
+
+- **On the workers' answers, leaving one worker out at a time.** This uses balanced accuracy, High versus not High. The current model never trained on answers, so it predicts them directly.
+- **On the study participants, leaving one participant out.** This uses balanced accuracy over Low, Medium and High, with and without the answers in training.
+
+`--apply` switches only when the candidate does at least as well on the answers and loses no more than 0.02 on the study participants. It first copies the old model to `.local/model_backups/`; to undo, copy the backup back and restart. Reports go to `.local/retrain/` because they name workers. Answers from demo sessions are left out unless `--include-demo` is given for practice, and `--apply` then refuses to run. Fatigue is rules-only, so fatigue answers measure agreement but train nothing.
+
+### Try it in class
+
+The whole loop takes about 20 minutes with one wristband, or with a recording if no band is available.
+
+1. **Start.** Run `python3 serve_dashboard.py` and open `http://127.0.0.1:8000/serving/dashboard.html`. Without a band, click **Run scripted demo** (it asks at the first High), or replay a recording as a demo session with `python3 tools/empatica_bridge.py --url http://127.0.0.1:8000 --source local --date <day> --participant <id> --since <UTC start> --until <UTC end> --replay-speed 1` and follow it.
+2. **Report how you feel.** Press **How do you feel?**, choose Yes / A little / No for both questions, and press **Send answer**.
+3. **Answer a check-in.** When High is predicted, the Quick check card appears. Answer it, and note the time it asks about: wristband data arrives late, so it may be several minutes ago. Recorded study days rarely reach High, so step 2 may be the only question in a replay.
+4. **Read the counts.** **Predictions by level** shows how many times each level was predicted and how many Medium-or-higher predictions came in a row.
+5. **Check agreement.** The agreement table shows how often High was confirmed per source. The check-in table shows every question, the prediction, the answer and whether they agreed.
+6. **Open the answers.** Open `.local/checkins/<worker>/checkins.csv` in Excel. The folder is hidden on macOS; in Finder press Cmd+Shift+. to show it.
+7. **Retrain.** Once there are at least 20 answers with both "felt frustrated" and "No", run `python3 training/retrain_from_checkins.py` and read the report: agreement per source, current versus candidate, and the verdict. Add `--apply` to switch when the verdict allows it.
+
+Answering is optional, and workers should agree to take part.
+
 ## Running it
 
 ```bash
@@ -286,9 +340,9 @@ The dashboard's scripted demo comes from [`config/demo_scenario.json`](../config
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Python (rules, timing, ML, signal quality, Empatica bridge, storage, API) | `python3 -m unittest discover -s tests -p 'test_*.py'` | 170 passed, 2 skipped (optional-dependency branches) |
+| Python (rules, timing, ML, signal quality, Empatica bridge, storage, API, check-ins, retraining) | `python3 -m unittest discover -s tests -p 'test_*.py'` | 189 passed, 2 skipped (optional-dependency branches) |
 | JavaScript (sensor decoding, HRV, browser rules) | `npm test` | 63 passed |
-| Browser (built panel, Team 3 dashboard and real local API) | `npx playwright test` | 16 passed |
+| Browser (built panel, Team 3 dashboard and real local API) | `npx playwright test` | 17 passed |
 
 [`tests/test_pipeline.py`](../tests/test_pipeline.py) contains:
 
@@ -322,6 +376,9 @@ Frustration prediction accuracy is reported in the ML section above. Fatigue acc
 - **The ML model needs an EDA and skin-temperature stream.** The Polar H10 provides neither. The EmbracePlus provides both, but through delayed uploads, so its predictions never trigger live feedback.
 - **Polar-only sessions are limited.** The H10 has no EDA. Frustration is Unavailable and fatigue tops out at Medium unless an EDA sensor is connected. They also keep the 5-second window, so "3 consecutive" there still means about 3 seconds.
 - **Fatigue is rules-only, and ML and rules are not blended for frustration.** The labelled set has no resting baseline or HR/HRV, so the rules cannot be scored on it and a blend cannot be validated.
+- **Check-ins hear about false alarms, not missed ones.** A question is asked only after a High prediction, so frustration the model missed is reported only through *How do you feel?*. Answers are labels of felt versus not felt, so they teach High versus Low, never Medium.
+- **Most Empatica Highs are never asked about.** Uploads arrive 30–60 minutes late and only moments under 30 minutes old are asked about, so a question appears only when an upload is processed soon after it was recorded. Raising `maxAgeMinutes` asks about more moments, at the cost of answers people remember less well.
+- **No retraining has run on real answers yet.** The retraining and switch rules are tested on synthetic data; until at least 20 real answers with both "Yes" and "No" exist, the model stays as trained on the study.
 
 ## Source files
 
@@ -343,10 +400,14 @@ Frustration prediction accuracy is reported in the ML section above. Fatigue acc
 | [`tests/test_empatica_bridge.py`](../tests/test_empatica_bridge.py) | Avro conversion, wear check, file handling, batch mode, late-data and session-list tests |
 | [`tests/test_signal_quality.py`](../tests/test_signal_quality.py) | Beat cleaning, baseline, EDA floor, prediction rate, repeat limit, cause matching, per-person scaling |
 | [`tests/test_frustration_model.py`](../tests/test_frustration_model.py) | ML feature, export and pipeline tests |
-| [`serving/server.py`](../serving/server.py) | `/samples`, `/latest`, `/history`, `/sessions`, `/cues`, `/feedback`, `/summary`, `/export` |
-| [`serving/dashboard.html`](../serving/dashboard.html) | Team 3 dashboard (display, audio, feedback buttons) |
-| [`storage/sqlite_store.py`](../storage/sqlite_store.py) | Readings, alerts, responses, outcomes |
+| [`serving/server.py`](../serving/server.py) | `/samples`, `/latest`, `/history`, `/sessions`, `/cues`, `/feedback`, `/summary`, `/export`, `/checkins` |
+| [`serving/dashboard.html`](../serving/dashboard.html) | Team 3 dashboard (display, audio, feedback buttons, Quick check, How do you feel?, agreement view) |
+| [`config/checkins.json`](../config/checkins.json) | When to ask, gap, oldest moment, expiry, "A little", question wording |
+| [`pipeline/checkins.py`](../pipeline/checkins.py) | When to ask, agreement per source, the worker's CSV and JSON |
+| [`training/retrain_from_checkins.py`](../training/retrain_from_checkins.py) | Candidate model from study windows plus answers; two-way test and safe switch |
+| [`storage/sqlite_store.py`](../storage/sqlite_store.py) | Readings, alerts, responses, outcomes, check-ins |
 | [`training/build_feedback_table.py`](../training/build_feedback_table.py) | Builds the feedback table from a CSV/XLSX sheet ([`config/feedback_template.csv`](../config/feedback_template.csv)) |
 | [`tools/demo_stream.py`](../tools/demo_stream.py) | Scripted replay without hardware |
 | [`sensor/study-panel.js`](../sensor/study-panel.js), [`sensor/closed-loop-panel.js`](../sensor/closed-loop-panel.js) | Polar H10 platform panel |
 | [`tests/test_pipeline.py`](../tests/test_pipeline.py) | Threshold, timing and end-to-end tests |
+| [`tests/test_checkins.py`](../tests/test_checkins.py), [`tests/test_retrain_from_checkins.py`](../tests/test_retrain_from_checkins.py) | When to ask, expiry, answers, agreement, files, routes; retraining gates and the safe switch |

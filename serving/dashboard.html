@@ -136,15 +136,44 @@
   td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
   footer { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--ink-2); }
 
+  /* Closed loop: Quick check card, self-report and the agreement (research) view. */
+  .checkin { margin-bottom: 16px; border-left: 4px solid var(--accent); border-radius: 4px 12px 12px 4px; }
+  .checkin-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+  .checkin-head h2 { margin: 0; font-size: 18px; }
+  .question { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px;
+    padding-top: 10px; border-top: 1px solid var(--hairline); }
+  .question > span { font-size: 15px; font-weight: 600; }
+  .seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 7px 16px; background: var(--surface); }
+  .seg button + button { border-left: 1px solid var(--axis); }
+  .seg button[aria-checked=true] { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .cause-row { display: grid; grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 8px 12px;
+    padding-top: 10px; border-top: 1px solid var(--hairline); }
+  .cause-row > span { font-size: 15px; font-weight: 600; }
+  .cause-row select, .cause-row input { min-width: 0; width: 100%; }
+  input[type=text] { font: inherit; font-size: 14px; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--axis); border-radius: 8px; padding: 7px 12px; }
+  .research { margin-top: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+  .stat { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+  .stat .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat .label { font-size: 12px; color: var(--ink-2); }
+  td.agree-yes { color: var(--good); font-weight: 600; }
+  td.agree-no { color: var(--critical); font-weight: 600; }
+  code { font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+
   @media (max-width: 900px) {
     .grid-inputs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .grid-bottom { grid-template-columns: minmax(0, 1fr); }
+    .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
   @media (max-width: 600px) {
     .grid-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .grid-states { grid-template-columns: minmax(0, 1fr); }
     .manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .sep { display: none; }
+    .question, .cause-row { grid-template-columns: minmax(0, 1fr); }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 </style>
 </head>
@@ -171,11 +200,13 @@
     </select></label>
     <span class="sep" aria-hidden="true"></span>
     <label class="inline"><input type="checkbox" id="speak"> Speak feedback</label>
+    <button id="feel" type="button" disabled title="Tell the system how you feel right now">How do you feel?</button>
     <span class="sep" aria-hidden="true"></span>
     <label class="inline">Session <select id="session-picker" aria-label="Saved session to follow"><option value="">Choose a saved session…</option></select></label>
     <button id="follow" type="button">Follow session</button>
   </div>
   <div class="phase" id="phase" role="status" aria-live="polite"><strong id="phase-title">Loading configuration…</strong><span class="small" id="phase-note"></span></div>
+  <section class="card checkin stack" id="checkin" hidden aria-labelledby="checkin-title"></section>
 
   <section aria-label="Inputs: change from the wearer's baseline">
     <h2>Inputs · change from the wearer's baseline</h2>
@@ -196,6 +227,7 @@
       <span><i class="swatch" style="background:var(--none)"></i>– · Unavailable</span>
       <span>◆ Feedback issued</span>
       <span>◇ Would have fired (late batch data)</span>
+      <span>? Quick check asked</span>
     </div>
     <div id="timeline"></div>
     <div class="tl-axis" id="tl-axis"><span></span><span></span></div>
@@ -237,6 +269,19 @@
         <button type="button" id="send-three" disabled>Send 3 in a row</button>
       </div>
     </article>
+  </section>
+
+  <section class="card stack research" id="research" aria-labelledby="research-title">
+    <h2 id="research-title">Closed loop · check-ins and agreement</h2>
+    <p class="small" id="research-intro">After a High prediction the worker is asked whether that is how they felt. Each answer checks the prediction and becomes a training label.</p>
+    <div class="stats" id="checkin-stats"></div>
+    <h3>Predictions by level · this session</h3>
+    <div class="table-wrap" id="level-table"></div>
+    <h3>Agreement · all sessions</h3>
+    <div class="table-wrap" id="agreement-table"></div>
+    <h3>Check-ins · this session</h3>
+    <div class="table-wrap" id="checkin-table"></div>
+    <p class="small" id="checkin-files"></p>
   </section>
 
   <details>
@@ -291,6 +336,16 @@ const TIMELINE_CELLS = 40;
 let config = null, steps = [], stepIndex = 0, session = null, counter = 0, clock = 0;
 let running = false, busy = false, speed = 1000, following = null, followTimer = null;
 let history = [], alerts = [], lastAlert = null, lastStreak = {}, latestResult = null, latestNotes = {};
+// Closed loop: the server decides when to ask (config/checkins.json); this page shows and answers.
+let checkinData = null, checkinSkew = 0, shownCheckin = null, selfReporting = false, checkinBusy = false, thanksUntil = 0;
+let draft = { answers: {}, cause: '', note: '' };
+const spokenCheckins = new Set();
+const ANSWERS = [['yes', 'Yes'], ['a-little', 'A little'], ['no', 'No']];
+const ANSWER_LABEL = Object.fromEntries(ANSWERS);
+const STATE_NAME = Object.fromEntries(STATES);
+const STATUS_LABEL = { open: 'Open', answered: 'Answered', 'no-answer': 'No answer', dismissed: 'Not now' };
+const DEFAULT_QUESTIONS = { frustration: 'Were you feeling frustrated at that time?', fatigue: 'Were you feeling tired at that time?',
+  cause: 'What was going on?', selfFrustration: 'Are you feeling frustrated right now?', selfFatigue: 'Are you feeling tired right now?' };
 
 const pct = v => Number.isFinite(v) ? `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}%` : '—';
 const fmt = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '—';
@@ -326,6 +381,7 @@ function newSession() {
   history = []; alerts = []; lastAlert = null; lastStreak = {}; latestResult = null; latestNotes = {};
   setPhase('Ready', `Scripted demo: ${steps.length} predictions in ${config.scenario.phases.length} phases. Values are synthetic.`);
   $('fb-status').textContent = '';
+  resetCheckins();
   render();
 }
 
@@ -346,6 +402,8 @@ async function send(changes, phaseTitle) {
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
   ingest(result, phaseTitle);
+  // A High prediction may have opened a Quick check; show it without waiting for the next poll.
+  void refreshCheckins();
 }
 
 async function guarded(task) {
@@ -513,6 +571,8 @@ function renderTimeline() {
   const shown = history.slice(-TIMELINE_CELLS);
   const pad = TIMELINE_CELLS - shown.length;
   const rows = [];
+  // reading_id -> the states a Quick check asked about at that prediction
+  const asked = new Map((checkinData?.checkins || []).filter(c => c.kind === 'prompted' && c.reading_id).map(c => [c.reading_id, c.trigger]));
   for (const [key, title] of STATES) {
     const marks = el('div', { className: 'tl-cells marks', 'aria-hidden': 'true' });
     const cells = el('div', { className: 'tl-cells', role: 'list', 'aria-label': `${title} predictions` });
@@ -521,9 +581,10 @@ function renderTimeline() {
       const d = entry.result.states[key];
       const level = levelOf(d);
       const decision = decisionText(d, key).text;
+      const question = asked.get(entry.result.reading_id)?.includes(key);
       const lines = [`#${entry.n} · ${title} ${LEVELS[level].label}`,
-        ...(d?.causeLabel && level !== 'low' ? [d.causeLabel] : []), entry.phase, decision];
-      marks.append(el('span', { className: 'mark', textContent: d?.alert ? '◆' : d?.wouldAlert ? '◇' : '' }));
+        ...(d?.causeLabel && level !== 'low' ? [d.causeLabel] : []), entry.phase, decision, ...(question ? ['Quick check asked about this moment.'] : [])];
+      marks.append(el('span', { className: 'mark', textContent: (d?.alert ? '◆' : d?.wouldAlert ? '◇' : '') + (question ? '?' : '') }));
       const cell = el('span', { className: 'cell', role: 'listitem', tabIndex: 0, dataset: { level },
         textContent: LEVELS[level].letter, 'aria-label': lines.join('. ') });
       for (const type of ['pointerenter', 'focus']) cell.addEventListener(type, e => showTooltip(e, lines));
@@ -580,6 +641,9 @@ function renderControls() {
     : followedMode === 'demo' ? 'DEMO · REPLAYED RECORDING' : live ? 'LIVE' : 'DEMO · SYNTHETIC DATA';
   $('session-label').textContent = live ? `Session ${following}` : session ? `Session ${session.session_id.slice(0, 22)}…` : '';
   for (const button of document.querySelectorAll('[data-kind]')) button.disabled = !lastAlert || busy;
+  // A self-report belongs to a saved session, so it needs at least one reading first.
+  $('feel').disabled = !currentId() || !latestResult;
+  $('feel').title = $('feel').disabled ? 'Start the demo or follow a session first.' : 'Tell the system how you feel right now';
 }
 
 function render() {
@@ -689,6 +753,7 @@ function follow(requested = null) {
   // The address bar always holds a link to this session, ready to share.
   window.history.replaceState(null, '', `?session=${encodeURIComponent(id)}`);
   setPhase(`Following session ${id}`, 'Loading recent readings…');
+  resetCheckins();
   render();
   // Load recent history first so newer polled readings always append in order.
   backfill(id).catch(error => setPhase('Session history unavailable', error.message, true)).then(() => {
@@ -696,6 +761,237 @@ function follow(requested = null) {
     void poll();
     followTimer = setInterval(poll, 1000);
   });
+}
+
+// ---------------------------------------------------------------- closed loop: Quick check and agreement
+
+const currentId = () => following || session?.session_id;
+const serverNow = () => Date.now() + checkinSkew;
+const clockTime = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const ago = ms => { const minutes = Math.floor((serverNow() - ms) / 60000); return minutes < 1 ? 'just now' : `${minutes} min ago`; };
+const percent = v => `${Math.round(v * 100)}%`;
+
+function dataTable(head, rows, numeric = [], cellClass = () => '') {
+  return el('table', {},
+    el('thead', {}, el('tr', {}, ...head.map((h, i) => el('th', { className: numeric.includes(i) ? 'num' : '', textContent: h })))),
+    el('tbody', {}, ...rows.map((row, r) => el('tr', {}, ...row.map((v, i) =>
+      el('td', { className: [numeric.includes(i) ? 'num' : '', cellClass(r, i)].join(' ').trim(), textContent: v }))))));
+}
+
+function resetCheckins() {
+  checkinData = null; shownCheckin = null; selfReporting = false; thanksUntil = 0;
+  $('checkin').hidden = true;
+  renderResearch();
+  void refreshCheckins();
+}
+
+async function refreshCheckins() {
+  const id = currentId();
+  if (!id) return;
+  try {
+    const response = await fetch(`/checkins?session_id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    if (currentId() !== id) return;
+    checkinData = data;
+    checkinSkew = data.now_ms - Date.now();
+    renderCheckin(); renderResearch(); renderTimeline();
+  } catch { /* check-ins appear once the server answers; readings and feedback keep working */ }
+}
+
+function latestCause() {
+  for (const [key] of STATES) {
+    const d = latestResult?.states?.[key];
+    if (d?.available && d.level !== 'low' && d.cause && d.cause !== 'unspecified') return d.cause;
+  }
+  return null;
+}
+
+function renderCheckin() {
+  const card = $('checkin');
+  const open = checkinData?.open;
+  const mode = selfReporting ? 'self' : open ? 'prompted' : null;
+  if (!mode) {
+    shownCheckin = null;
+    if (Date.now() < thanksUntil) return;  // the thank-you note stays up briefly
+    card.hidden = true;
+    return;
+  }
+  const key = mode === 'self' ? 'self' : open.id;
+  if (key !== shownCheckin) {
+    buildCheckin(mode, open);
+    shownCheckin = key;
+    if (mode === 'prompted') speakCheckin(open);
+  }
+  updateCheckinClock();
+}
+
+function buildCheckin(mode, open) {
+  const q = { ...DEFAULT_QUESTIONS, ...(checkinData?.settings?.questions || {}) };
+  const prompted = mode === 'prompted';
+  const predicted = prompted ? open.predictedCause?.key : latestCause();
+  draft = { answers: {}, cause: predicted || 'not-sure', note: '' };
+  let intro = 'Tell us how you feel right now. Answering is optional; each answer checks the predictions.';
+  if (prompted) {
+    const trigger = open.trigger.map(s => `${STATE_NAME[s]} predicted ${LEVELS[open.predicted[s].level]?.label || open.predicted[s].level}`).join(' and ');
+    const late = open.mode === 'batch' ? '; wristband data arrives late' : '';
+    intro = `About ${clockTime(open.moment_ms)} (${ago(open.moment_ms)}${late}) · ${trigger} · ${open.predicted[open.trigger[0]]?.source || ''}`;
+  }
+  const rows = [['frustration', prompted ? q.frustration : q.selfFrustration], ['fatigue', prompted ? q.fatigue : q.selfFatigue]].map(([state, text]) => {
+    const group = el('div', { className: 'seg', role: 'radiogroup', 'aria-label': text });
+    for (const [value, label] of ANSWERS) {
+      const button = el('button', { type: 'button', role: 'radio', textContent: label, 'aria-checked': 'false', dataset: { state, value } });
+      button.addEventListener('click', () => {
+        draft.answers[state] = value;
+        for (const other of group.children) other.setAttribute('aria-checked', String(other === button));
+        updateSend();
+      });
+      group.append(button);
+    }
+    return el('div', { className: 'question' }, el('span', { textContent: text }), group);
+  });
+  const causes = { ...(checkinData?.causes || {}), other: 'Something else', 'not-sure': 'Not sure' };
+  const select = el('select', { id: 'checkin-cause', 'aria-label': q.cause },
+    ...Object.entries(causes).map(([value, label]) => el('option', { value, textContent: value === predicted ? `${label} (predicted)` : label })));
+  select.value = draft.cause;
+  select.addEventListener('change', () => { draft.cause = select.value; });
+  const note = el('input', { type: 'text', id: 'checkin-note', maxLength: 500, placeholder: 'Anything to add? (optional)', 'aria-label': 'Note (optional)' });
+  note.addEventListener('input', () => { draft.note = note.value; });
+  const send = el('button', { type: 'button', className: 'primary', id: 'checkin-send', textContent: 'Send answer', disabled: true });
+  send.addEventListener('click', () => void submitCheckin(prompted ? 'answer' : 'self-report', open?.id));
+  const later = el('button', { type: 'button', id: 'checkin-later', textContent: prompted ? 'Not now' : 'Cancel' });
+  later.addEventListener('click', () => { if (prompted) void submitCheckin('dismiss', open.id); else closeSelfReport(); });
+  $('checkin').replaceChildren(
+    el('div', { className: 'checkin-head' }, el('h2', { id: 'checkin-title', textContent: prompted ? 'Quick check' : 'How do you feel?' }),
+      el('span', { className: 'small', id: 'checkin-clock' })),
+    el('p', { className: 'small', id: 'checkin-intro', textContent: intro }),
+    ...rows,
+    el('div', { className: 'cause-row' }, el('span', { textContent: q.cause }), select, note),
+    el('div', { className: 'btn-row' }, send, later, el('span', { className: 'small', id: 'checkin-status', role: 'status' })));
+  $('checkin').hidden = false;
+}
+
+function updateSend() {
+  const send = $('checkin-send');
+  if (send) send.disabled = checkinBusy || !draft.answers.frustration || !draft.answers.fatigue;
+}
+
+function updateCheckinClock() {
+  const clock = $('checkin-clock');
+  if (!clock || $('checkin').hidden) return;
+  const open = checkinData?.open;
+  if (selfReporting || !open || shownCheckin !== open.id) { clock.textContent = ''; return; }
+  const left = open.expires_ms - serverNow();
+  clock.textContent = left > 0
+    ? `Closes in ${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, '0')}; then saved as “no answer”`
+    : 'Closing…';
+}
+
+function speakCheckin(open) {
+  // Spoken once per question, queued after any feedback that is still being read out.
+  if (spokenCheckins.has(open.id)) return;
+  spokenCheckins.add(open.id);
+  if (!$('speak').checked || !globalThis.speechSynthesis || !globalThis.SpeechSynthesisUtterance) return;
+  const q = { ...DEFAULT_QUESTIONS, ...(checkinData?.settings?.questions || {}) };
+  const prefix = open.mode === 'demo' ? 'Demonstration. ' : '';
+  globalThis.speechSynthesis.speak(new SpeechSynthesisUtterance(
+    `${prefix}Quick check about ${clockTime(open.moment_ms)}. ${q[open.trigger[0]]} Please answer on screen.`));
+}
+
+async function submitCheckin(kind, checkinId) {
+  const id = currentId();
+  if (!id || checkinBusy) return;
+  checkinBusy = true; updateSend();
+  const body = { session_id: id, kind, ...(checkinId ? { checkin_id: checkinId } : {}) };
+  if (kind !== 'dismiss') Object.assign(body, { answers: draft.answers, cause: draft.cause || null, note: draft.note });
+  try {
+    const response = await fetch('/checkins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    selfReporting = false; shownCheckin = null; thanksUntil = Date.now() + 4000;
+    $('checkin').replaceChildren(el('p', { role: 'status', textContent: kind === 'dismiss'
+      ? 'Question closed. It is saved as “not now”.' : 'Thank you. Your answer is saved.' }));
+    setTimeout(() => renderCheckin(), 4100);
+    await refreshCheckins();
+  } catch (error) {
+    const status = $('checkin-status');
+    if (status) status.textContent = `Not saved: ${error.message}`;
+  } finally {
+    checkinBusy = false; updateSend();
+  }
+}
+
+async function openSelfReport() {
+  if (!checkinData) await refreshCheckins();
+  if (checkinData?.open) {  // one question at a time: answer the open one first
+    $('checkin').scrollIntoView({ block: 'nearest' });
+    $('checkin').querySelector('[role=radio]')?.focus();
+    return;
+  }
+  selfReporting = true; shownCheckin = null; thanksUntil = 0;
+  renderCheckin();
+  $('checkin').scrollIntoView({ block: 'nearest' });
+  $('checkin').querySelector('[role=radio]')?.focus();
+}
+
+function closeSelfReport() {
+  selfReporting = false; shownCheckin = null;
+  renderCheckin();
+}
+
+function renderResearch() {
+  const data = checkinData, s = data?.settings;
+  if (s) {
+    const asks = Object.entries(s.askLevels).filter(([, levels]) => levels.length)
+      .map(([state, levels]) => `${levels.map(l => LEVELS[l]?.label || l).join(' or ')} ${state}`).join(' or ');
+    $('research-intro').textContent = `After a High prediction the worker is asked whether that is how they felt; each answer checks the prediction and becomes a training label. `
+      + `Asks after ${asks}, at most once every ${s.minGapMinutes} min per session, only about moments from the last ${s.maxAgeMinutes} min, one question at a time. `
+      + `A question unanswered for ${s.expireMinutes} min is saved as “no answer”. “A little” counts as ${s.littleCountsAs === 'yes' ? 'felt' : 'not felt'}.`;
+  }
+  const counts = data?.session?.counts || {};
+  $('checkin-stats').replaceChildren(...[['asked', 'Asked'], ['answered', 'Answered'], ['noAnswer', 'No answer'], ['dismissed', 'Not now'],
+    ['selfReports', 'Self-reports'], ['open', 'Open']].map(([key, label]) => el('div', { className: 'stat' },
+    el('div', { className: 'value', textContent: String(counts[key] ?? 0) }), el('div', { className: 'label', textContent: label }))));
+
+  const lv = data?.levels;
+  const predicted = lv && STATES.some(([key]) => ['low', 'medium', 'high', 'unavailable'].some(l => lv[key][l]));
+  $('level-table').replaceChildren(predicted
+    ? dataTable(['State · source', 'Low', 'Medium', 'High', 'Unavailable', 'Medium or higher in a row (now)', 'Longest such run'],
+        STATES.map(([key, title]) => [`${title} · ${lv.device || '—'}`, ...['low', 'medium', 'high', 'unavailable', 'run', 'longestRun'].map(k => String(lv[key][k]))]),
+        [1, 2, 3, 4, 5, 6])
+    : el('p', { className: 'small muted', textContent: 'No predictions in this session yet.' }));
+
+  const rows = data?.all?.agreement || [];
+  $('agreement-table').replaceChildren(rows.length
+    ? dataTable(['State', 'Source', 'Answers', 'High predicted', 'Yes / A little / No', 'High confirmed', 'All answers agree'],
+        rows.map(r => [STATE_NAME[r.state], r.source, String(r.answers), String(r.predictedHigh), `${r.yes} / ${r.aLittle} / ${r.no}`,
+          r.confirmedRate === null ? '—' : `${percent(r.confirmedRate)} (${r.confirmed} of ${r.predictedHigh})`, percent(r.agreement)]),
+        [2, 3, 5, 6])
+    : el('p', { className: 'small muted', textContent: 'No answered check-ins yet, in any session.' }));
+
+  const list = data?.checkins || [];
+  const agreeText = v => v === true ? 'Agrees' : v === false ? 'Disagrees' : '—';
+  const agreeClass = v => v === true ? 'agree-yes' : v === false ? 'agree-no' : '';
+  const levelText = p => LEVELS[p?.level]?.label || '—';
+  $('checkin-table').replaceChildren(list.length
+    ? dataTable(['Asked about', 'Type', 'Predicted (frustration · fatigue)', 'Answer (frustration · fatigue)', 'What was going on',
+        'Frustration', 'Fatigue', 'Status'], list.map(c => {
+        const reported = c.reportedCause?.label || '—';
+        const differs = c.predictedCause && c.reportedCause && c.predictedCause.key !== c.reportedCause.key ? ` (predicted ${c.predictedCause.label})` : '';
+        return [`${clockTime(c.moment_ms)}${c.kind === 'prompted' ? ` · asked ${clockTime(c.asked_ms)}` : ''}`,
+          c.kind === 'prompted' ? 'Quick check' : 'Self-report',
+          `${levelText(c.predicted?.frustration)} · ${levelText(c.predicted?.fatigue)}`,
+          c.status === 'answered' ? `${ANSWER_LABEL[c.answers.frustration]} · ${ANSWER_LABEL[c.answers.fatigue]}` : '—',
+          c.status === 'answered' ? `${reported}${differs}${c.note ? ` · “${c.note}”` : ''}` : '—',
+          agreeText(c.agrees?.frustration), agreeText(c.agrees?.fatigue), STATUS_LABEL[c.status] || c.status];
+      }), [], (r, i) => agreeClass(i === 5 ? list[r].agrees?.frustration : i === 6 ? list[r].agrees?.fatigue : undefined))
+    : el('p', { className: 'small muted', textContent: 'No questions in this session yet.' }));
+
+  $('checkin-files').replaceChildren(...(data?.folder ? [
+    'Saved locally to ', el('code', { textContent: `${data.folder}/checkins.csv` }), ' (opens in Excel) and ',
+    el('code', { textContent: 'checkins.json' }), ' (with the sensor features of each moment). To retrain, run ',
+    el('code', { textContent: 'python3 training/retrain_from_checkins.py' }), '; add ', el('code', { textContent: '--apply' }),
+    ' to switch only if the new model is not worse.'] : ['Answers are saved per worker once a session has readings.']));
 }
 
 function manualValues() {
@@ -828,6 +1124,10 @@ $('follow').addEventListener('click', () => follow());
 $('session-picker').addEventListener('pointerdown', () => void loadSessions());
 $('session-picker').addEventListener('focus', () => void loadSessions());
 $('speak').addEventListener('change', e => { if (!e.target.checked) globalThis.speechSynthesis?.cancel(); });
+$('feel').addEventListener('click', () => void openSelfReport());
+// Questions are opened by the server as readings arrive (including delayed uploads), so poll for them.
+setInterval(() => void refreshCheckins(), 3000);
+setInterval(updateCheckinClock, 1000);
 $('send-one').addEventListener('click', () => void guarded(async () => { setPhase('Manual input', 'Your values, sent as one prediction.'); await send(manualValues(), 'Manual input'); }));
 $('send-three').addEventListener('click', () => void guarded(async () => {
   setPhase('Manual input', 'Your values, sent as three consecutive predictions.');

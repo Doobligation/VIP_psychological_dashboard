@@ -45,6 +45,15 @@ class SQLiteStore:
                 kind TEXT NOT NULL, reading_id TEXT REFERENCES readings(id),
                 alert_id TEXT REFERENCES alerts(id), data_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS checkins (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                participant TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+                reading_id TEXT REFERENCES readings(id), moment_ms REAL NOT NULL, asked_ms REAL NOT NULL,
+                expires_ms REAL, data_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS checkins_session ON checkins(session_id, asked_ms);
+            CREATE INDEX IF NOT EXISTS checkins_open ON checkins(status, expires_ms);
             CREATE INDEX IF NOT EXISTS readings_session_time ON readings(session_id,timestamp_ms);
             CREATE INDEX IF NOT EXISTS feedback_session ON feedback(session_id);
             CREATE INDEX IF NOT EXISTS alerts_session ON alerts(session_id);
@@ -140,6 +149,59 @@ class SQLiteStore:
             "SELECT data_json FROM feedback WHERE session_id=? AND kind='rating' ORDER BY sequence DESC LIMIT 1",
             (session_id,)).fetchone()
         return json.loads(row['data_json']) if row else None
+
+    # Check-ins (closed loop): one row per question asked or self-report, the record in data_json.
+    def save_checkin(self, record):
+        self.connection.execute(
+            'INSERT INTO checkins(id,session_id,participant,kind,status,reading_id,moment_ms,asked_ms,expires_ms,data_json) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (record['id'], record['session_id'], record['participant'], record['kind'], record['status'],
+             record.get('reading_id'), record['moment_ms'], record['asked_ms'], record.get('expires_ms'), dumps(record)))
+
+    def update_checkin(self, record):
+        self.connection.execute('UPDATE checkins SET status=?, data_json=? WHERE id=?',
+                                (record['status'], dumps(record), record['id']))
+
+    def checkin(self, session_id, checkin_id):
+        row = self.connection.execute('SELECT data_json FROM checkins WHERE session_id=? AND id=?',
+                                      (session_id, checkin_id)).fetchone()
+        return json.loads(row['data_json']) if row else None
+
+    def open_checkin(self, session_id):
+        row = self.connection.execute("SELECT data_json FROM checkins WHERE session_id=? AND status='open' "
+                                      'ORDER BY asked_ms DESC, sequence DESC LIMIT 1', (session_id,)).fetchone()
+        return json.loads(row['data_json']) if row else None
+
+    def last_checkin_ms(self, session_id, kind):
+        return self.connection.execute('SELECT MAX(asked_ms) FROM checkins WHERE session_id=? AND kind=?',
+                                       (session_id, kind)).fetchone()[0]
+
+    def due_checkins(self, now_ms):
+        rows = self.connection.execute("SELECT data_json FROM checkins WHERE status='open' AND expires_ms<=? ORDER BY sequence",
+                                       (now_ms,)).fetchall()
+        return [json.loads(row['data_json']) for row in rows]
+
+    def checkins(self, session_id=None, participant=None):
+        where, args = [], []
+        for column, value in (('session_id', session_id), ('participant', participant)):
+            if value is not None:
+                where.append(f'{column}=?')
+                args.append(value)
+        rows = self.connection.execute('SELECT data_json FROM checkins' + (' WHERE ' + ' AND '.join(where) if where else '')
+                                       + ' ORDER BY asked_ms, sequence', args).fetchall()
+        return [json.loads(row['data_json']) for row in rows]
+
+    def prediction_levels(self, session_id):
+        """Per reading, oldest first: the source and each state's availability, level and prediction flag."""
+        return self.connection.execute(
+            """SELECT json_extract(sample_json,'$.raw.source') AS source,
+                      json_extract(result_json,'$.states.frustration.available') AS frustration_available,
+                      json_extract(result_json,'$.states.frustration.level') AS frustration_level,
+                      json_extract(result_json,'$.states.frustration.prediction') AS frustration_prediction,
+                      json_extract(result_json,'$.states.fatigue.available') AS fatigue_available,
+                      json_extract(result_json,'$.states.fatigue.level') AS fatigue_level,
+                      json_extract(result_json,'$.states.fatigue.prediction') AS fatigue_prediction
+               FROM readings WHERE session_id=? ORDER BY timestamp_ms, sequence""", (session_id,)).fetchall()
 
     def summary(self, session_id):
         result = {'session_id': session_id}
