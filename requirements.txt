@@ -1,0 +1,13 @@
+# The rule pipeline and local SQLite server use the Python standard library.
+# Everything below is for ML training, the Empatica bridge and XLSX table/recording imports.
+# scikit-learn 1.8 needs Python 3.11 or newer.
+numpy>=1.24,<3
+scikit-learn==1.8.0
+pandas>=2,<4
+xgboost>=2,<4
+openpyxl>=3.1,<4
+python-dotenv>=1,<2
+boto3>=1.28,<2
+fastavro>=1.8,<2
+# Only for the legacy poller, avro_stream_poller_with_ml.py.
+flask>=3,<4

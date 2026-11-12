@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic Team 3 demo: one prediction per step, values are % change from a resting baseline. Not participant data.",
+  "baseline": { "eda": 2.0, "scr": 6.0, "hr": 75, "rmssd": 45, "sdnn": 55 },
+  "patterns": {
+    "rest": { "eda": 1, "scr": 0, "hr": 1, "rmssd": 2, "sdnn": 1 },
+    "frustrationMedium": { "eda": 22, "scr": 28, "hr": 11, "rmssd": -17, "sdnn": -17 },
+    "frustrationHigh": { "eda": 35, "scr": 45, "hr": 17, "rmssd": -27, "sdnn": -27 },
+    "fatigueMedium": { "eda": -3, "scr": -5, "hr": 4, "rmssd": -28, "sdnn": -22 },
+    "fatigueHigh": { "eda": -4, "scr": -6, "hr": 5, "rmssd": -40, "sdnn": -35 }
+  },
+  "phases": [
+    { "title": "Resting", "note": "Both states predict Low. Low never issues feedback.",
+      "steps": ["rest", "rest", "rest", "rest"] },
+    { "title": "Frustration rises to Medium", "note": "Medium is predicted, but Medium never issues feedback.",
+      "steps": ["frustrationMedium", "frustrationMedium", "frustrationMedium", "frustrationMedium"] },
+    { "title": "Two Highs, then a Medium", "note": "The High count reaches 2 of 3, then the Medium prediction resets it to 0.",
+      "steps": ["frustrationHigh", "frustrationHigh", "frustrationMedium"] },
+    { "title": "Three consecutive Highs", "note": "The third consecutive High prediction issues cause-specific frustration feedback.",
+      "steps": ["frustrationHigh", "frustrationHigh", "frustrationHigh"] },
+    { "title": "Recovery", "note": "Back to Low; no feedback.",
+      "steps": ["rest", "rest", "rest"] },
+    { "title": "Fatigue rises to Medium", "note": "HRV falls past the Medium thresholds. Medium never issues feedback.",
+      "steps": ["fatigueMedium", "fatigueMedium", "fatigueMedium", "fatigueMedium"] },
+    { "title": "Three consecutive High fatigue predictions", "note": "The third consecutive High prediction issues fatigue feedback.",
+      "steps": ["fatigueHigh", "fatigueHigh", "fatigueHigh"] },
+    { "title": "Recovery", "note": "Back to Low; no feedback.",
+      "steps": ["rest", "rest", "rest"] }
+  ]
+}

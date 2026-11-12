@@ -1,0 +1,21 @@
+{
+  "name": "vip-psychological-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild sensor/panel.js --bundle --minify --format=esm --target=chrome100,edge100 --outfile=assets/polar-panel.js",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "fili": "2.0.3",
+    "polar-h10": "1.0.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "esbuild": "0.28.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

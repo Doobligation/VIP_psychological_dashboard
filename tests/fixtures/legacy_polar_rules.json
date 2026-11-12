@@ -1,0 +1,230 @@
+{
+  "schemaVersion": 1,
+  "version": "group1-2026-10-21-v1",
+  "scoreSemantics": "Heuristic rule severity score; not a calibrated physiological probability.",
+  "featurePolicy": {
+    "windowSeconds": 60,
+    "freshSeconds": 5,
+    "minRr": 30,
+    "rrMinMs": 300,
+    "rrMaxMs": 2000,
+    "baselineSamples": 30
+  },
+  "probabilityBands": [
+    {
+      "level": "none",
+      "severity": 0,
+      "min": 0,
+      "score": 0
+    },
+    {
+      "level": "low",
+      "severity": 1,
+      "min": 0.1,
+      "score": 0.2
+    },
+    {
+      "level": "medium",
+      "severity": 2,
+      "min": 0.35,
+      "score": 0.45
+    },
+    {
+      "level": "high",
+      "severity": 3,
+      "min": 0.6,
+      "score": 0.7
+    },
+    {
+      "level": "very-high",
+      "severity": 4,
+      "min": 0.85,
+      "score": 0.9
+    }
+  ],
+  "states": {
+    "fatigue": {
+      "enabled": true,
+      "defaultLevel": "none",
+      "requiredSignals": [
+        "hrChangePct",
+        "rmssdChangePct",
+        "sdnnChangePct"
+      ],
+      "minEvidence": 3,
+      "rules": [
+        {
+          "cause": "cardiovascular-strain",
+          "level": "very-high",
+          "severity": 4,
+          "score": 0.9,
+          "match": "all",
+          "minEvidence": 3,
+          "conditions": [
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 25
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -40
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -35
+            }
+          ],
+          "explanation": "Elevated HR with reduced RMSSD and SDNN matches cardiovascular strain; its underlying cause cannot be inferred."
+        },
+        {
+          "cause": "cardiovascular-strain",
+          "level": "high",
+          "severity": 3,
+          "score": 0.7,
+          "match": "all",
+          "minEvidence": 3,
+          "conditions": [
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 15
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -35
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -30
+            }
+          ],
+          "explanation": "Elevated HR with reduced RMSSD and SDNN matches cardiovascular strain; its underlying cause cannot be inferred."
+        },
+        {
+          "cause": "cardiovascular-strain",
+          "level": "medium",
+          "severity": 2,
+          "score": 0.45,
+          "match": "all",
+          "minEvidence": 3,
+          "conditions": [
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 10
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -25
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -20
+            }
+          ],
+          "explanation": "Elevated HR with reduced RMSSD and SDNN matches cardiovascular strain; its underlying cause cannot be inferred."
+        },
+        {
+          "cause": "cardiovascular-strain",
+          "level": "low",
+          "severity": 1,
+          "score": 0.2,
+          "match": "all",
+          "minEvidence": 3,
+          "conditions": [
+            {
+              "signal": "hrChangePct",
+              "operator": ">",
+              "value": 5
+            },
+            {
+              "signal": "rmssdChangePct",
+              "operator": "<",
+              "value": -15
+            },
+            {
+              "signal": "sdnnChangePct",
+              "operator": "<",
+              "value": -15
+            }
+          ],
+          "explanation": "Elevated HR with reduced RMSSD and SDNN matches cardiovascular strain; its underlying cause cannot be inferred."
+        }
+      ]
+    },
+    "posture": {
+      "enabled": true,
+      "defaultLevel": "good",
+      "requiredSignals": [
+        "absPitch",
+        "absRoll"
+      ],
+      "minEvidence": 2,
+      "rules": [
+        {
+          "cause": "chest-tilt",
+          "level": "critical",
+          "severity": 3,
+          "score": 0.7,
+          "match": "any",
+          "minEvidence": 2,
+          "conditions": [
+            {
+              "signal": "absPitch",
+              "operator": ">",
+              "value": 45
+            },
+            {
+              "signal": "absRoll",
+              "operator": ">",
+              "value": 20
+            }
+          ],
+          "explanation": "Calibrated chest tilt exceeds the pitch or roll threshold; twisting and task cause cannot be inferred."
+        },
+        {
+          "cause": "chest-tilt",
+          "level": "poor",
+          "severity": 2,
+          "score": 0.45,
+          "match": "any",
+          "minEvidence": 2,
+          "conditions": [
+            {
+              "signal": "absPitch",
+              "operator": ">",
+              "value": 20
+            },
+            {
+              "signal": "absRoll",
+              "operator": ">",
+              "value": 10
+            }
+          ],
+          "explanation": "Calibrated chest tilt exceeds the pitch or roll threshold; twisting and task cause cannot be inferred."
+        }
+      ]
+    },
+    "stress": {
+      "enabled": false,
+      "defaultLevel": "unavailable",
+      "requiredSignals": [],
+      "minEvidence": 1,
+      "rules": []
+    },
+    "frustration": {
+      "enabled": false,
+      "defaultLevel": "unavailable",
+      "requiredSignals": [],
+      "minEvidence": 1,
+      "rules": []
+    }
+  }
+}
